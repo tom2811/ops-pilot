@@ -1,0 +1,30 @@
+import type { Role } from "@opspilot/core";
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+export type TenantContext = {
+  id: string;
+  slug: string;
+  name: string;
+  role: Role;
+};
+
+export type AutomationContext = {
+  runId: string;
+  eventId: string;
+  tenantId: string;
+  tenantSlug: string;
+};
+
+declare module "fastify" {
+  interface FastifyRequest {
+    authUser?: AuthUser;
+    tenant?: TenantContext;
+    automation?: AutomationContext;
+    correlationId: string;
+  }
+}

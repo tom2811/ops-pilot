@@ -1,34 +1,60 @@
 # OpsPilot
 
-Multi-tenant IT service desk with a TypeScript API, React UI, Postgres RLS, and n8n automation.
+Multi-tenant IT service desk with a TypeScript API, React UI, PostgreSQL row-level security, and n8n automation.
 
 ## Status
 
-Milestone 1: tenant-aware ticket core, transactional outbox, and ticket-created routing workflow.
+Milestone 1 is implemented: tenant-aware ticket core, session auth, role-scoped queues, configuration, comments, lifecycle transitions, audit history, transactional outbox, and a ticket-created n8n routing workflow.
 
 ## Stack
 
-- pnpm workspace
-- React, Vite, Tailwind, TanStack Query, React Router, React Hook Form, Zod
+- pnpm workspace, TypeScript, Node 24
+- React 19, React Router, Vite
 - Fastify, Zod, `pg`
-- PostgreSQL 17 with row-level security
-- n8n Community Edition (self-hosted)
+- PostgreSQL 17 with RLS
+- n8n Community Edition, self-hosted
 
-## Quick start
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `apps/api` | Fastify API, session auth, ticket/domain routes, outbox worker |
+| `apps/web` | React UI: queue, ticket detail, workspace admin |
+| `packages/core` | Shared Zod schemas, roles, stages, routing matcher, password hashing |
+| `packages/db` | SQL migrations, app role creation, demo seed |
+| `deploy/n8n` | Importable routing workflow |
+| `deploy/nginx.conf` | Static web serving and `/api` proxy |
+| `compose.yaml` | PostgreSQL, bootstrap, API, worker, web, n8n |
+
+## Local setup
+
+Requires Node 24+, Corepack, and PostgreSQL 17.
 
 ```bash
 cp .env.example .env
 createdb opspilot
+corepack enable
 pnpm install
 pnpm db:role
 pnpm db:migrate
 pnpm db:seed
 pnpm dev:api
+```
+
+In a second terminal:
+
+```bash
 pnpm dev:web
 ```
 
 API: `http://localhost:3000`  
 Web: `http://localhost:5173`
+
+Start the automation worker when n8n is available:
+
+```bash
+pnpm worker
+```
 
 Demo accounts use password `Passw0rd!`:
 
@@ -39,6 +65,69 @@ Demo accounts use password `Passw0rd!`:
 | acme | employee@acme.test | employee |
 | globex | admin@globex.test | tenant_admin |
 | globex | agent@globex.test | agent |
+| globex | employee@globex.test | employee |
+
+## Docker Compose demo
+
+```bash
+docker compose up --build
+```
+
+- Web: `http://localhost:8080`
+- API: `http://localhost:3000`
+- n8n: `http://localhost:5678`
+- PostgreSQL: `localhost:5433`
+
+The one-shot `bootstrap` service creates the non-owner app role, applies migrations, and seeds the demo tenants. It re-seeds on every `docker compose up`, resetting demo data. The n8n container imports and activates `deploy/n8n/workflow.json`.
+
+## Tenancy and security
+
+- Shared schema, `tenant_id` on every tenant-owned row, RLS enabled and forced.
+- The API connects as a non-owner role without `BYPASSRLS`; transactions set `app.user_id` and `app.tenant_id`.
+- Composite foreign keys include `tenant_id`, so cross-tenant references fail even if a client bypasses a route check.
+- Global users with per-tenant memberships; tenant URLs are path-based (`/t/:tenantSlug`).
+- Platform admins are modeled separately and are not tenant members by default.
+- Passwords use scrypt; sessions use random tokens stored as SHA-256 hashes in HttpOnly cookies.
+- Audit rows are append-only for the app role.
+
+Milestone 1 fixes the lifecycle stages (`new`, `open`, `in_progress`, `pending`, `resolved`, `closed`). Tenants configure teams, categories, priorities, custom fields, routing rules, and notification text. Custom roles, arbitrary transition graphs, and per-tenant SMTP are deferred.
+
+## Configuration and routing
+
+`GET /api/t/:tenantSlug/config` returns the tenant's teams, categories, priorities, statuses, public custom fields, routing rules, agents, and settings. Tenant admins can create teams, categories, priorities, custom fields, and routing rules from the Admin UI.
+
+Routing rules contain `{ "all": [...] }` conditions over category, priority, priority rank, and custom fields. The first active matching rule wins; otherwise the category default team is used. `POST /api/t/:tenantSlug/routing/preview` previews the result.
+
+## Automation flow
+
+1. Ticket creation inserts a `ticket.created` outbox event in the same transaction.
+2. The worker claims pending events with `FOR UPDATE SKIP LOCKED`.
+3. For `ticket.created`, the worker creates an `automation_runs` row, issues a short-lived run token, signs the payload with HMAC-SHA256, and posts to n8n.
+4. n8n calls allowlisted automation commands with `x-opspilot-run-token`: preview route, assign, record notification, complete.
+5. Commands are tenant-scoped by the run token and idempotent via `command_receipts`.
+6. Successful delivery marks the outbox event delivered; failures back off and become dead after five attempts.
+
+The worker marks non-`ticket.created` events delivered in milestone 1.
+
+Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_WEBHOOK_URL` plus `N8N_WEBHOOK_SECRET` for the worker. The Compose setup does this automatically.
+
+## API surface
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/auth/login` | Email/password session |
+| POST | `/api/auth/logout` | Clear session |
+| GET | `/api/auth/me` | User and memberships |
+| GET | `/api/t/:tenantSlug/tickets` | Role-scoped list, filters, pagination |
+| POST | `/api/t/:tenantSlug/tickets` | Create ticket |
+| GET | `/api/t/:tenantSlug/tickets/:id` | Detail, visible comments, history, transitions |
+| POST | `/api/t/:tenantSlug/tickets/:id/transitions` | Version-checked lifecycle move |
+| POST | `/api/t/:tenantSlug/tickets/:id/assign` | Team/assignee update |
+| POST | `/api/t/:tenantSlug/tickets/:id/comments` | Public reply or internal note |
+| POST | `/api/t/:tenantSlug/routing/preview` | Routing preview |
+| GET | `/api/t/:tenantSlug/config` | Tenant configuration |
+| POST | `/api/t/:tenantSlug/{teams,categories,priorities,custom-fields,routing-rules}` | Admin config |
+| POST | `/api/automation/runs/:runId/*` | Run-token automation commands |
 
 ## Scripts
 
@@ -46,23 +135,19 @@ Demo accounts use password `Passw0rd!`:
 |---|---|
 | `pnpm db:role` | Create/update the non-owner app DB role |
 | `pnpm db:migrate` | Apply SQL migrations and grants |
-| `pnpm db:seed` | Seed two demo tenants |
+| `pnpm db:seed` | Reset and seed two demo tenants |
 | `pnpm dev:api` | API with watch |
 | `pnpm dev:web` | Vite UI |
 | `pnpm worker` | Outbox dispatcher |
-| `pnpm typecheck` | TypeScript across workspace |
+| `pnpm typecheck` | TypeScript across the workspace |
 | `pnpm test` | Unit tests |
 | `pnpm build` | Production web build |
 
-## Automation
-
-Import `infra/n8n/workflows/ticket-created.json` into a local n8n instance. Set `OPSPILOT_WEBHOOK_SECRET` to the same value as `N8N_WEBHOOK_SECRET`, and start the worker. The workflow verifies the signature, previews routing, assigns the ticket, and records a notification.
-
 ## Scope
 
-Included: multi-tenancy with RLS, session auth, tenant roles, ticket creation/list/detail, configurable statuses and priorities, comments, transitions, assignment, outbox, n8n routing, audit history.
+Included: RLS tenancy, session auth, tenant roles, configuration, custom fields, routing, ticket lifecycle, comments, assignment, audit, outbox, idempotent automation, n8n workflow, responsive UI.
 
-Deferred: SLA engine, feedback, email delivery, tenant admin UI, invitations, attachments, dashboards.
+Deferred: SLA engine, real email delivery, attachments, invitations, feedback, dashboards, platform admin UI, custom roles, arbitrary workflow graphs.
 
 ## Branching
 

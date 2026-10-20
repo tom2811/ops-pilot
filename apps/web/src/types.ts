@@ -1,0 +1,151 @@
+export type Role = "tenant_admin" | "agent" | "employee";
+
+export type User = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+export type Membership = {
+  id: string;
+  slug: string;
+  name: string;
+  role: Role;
+};
+
+export type Team = { id: string; slug: string; name: string };
+export type Category = { id: string; slug: string; name: string; default_team_id: string | null };
+export type Priority = { id: string; key: string; label: string; rank: number; color: string };
+export type Status = { id: string; key: string; label: string; stage: string; sort_order: number };
+
+export type CustomField = {
+  id: string;
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "date" | "select" | "multiselect" | "checkbox";
+  required: boolean;
+  visibility: "public" | "internal";
+  options: string[];
+  applies_to_category_id: string | null;
+  sort_order: number;
+};
+
+export type Agent = {
+  id: string;
+  name: string;
+  role: Role;
+  team_ids: string[];
+};
+
+export type RoutingRule = {
+  id: string;
+  name: string;
+  conditions: unknown;
+  team_id: string;
+  sort_order: number;
+  version: number;
+};
+
+export type TenantSettings = {
+  timezone: string;
+  ticket_prefix: string;
+  reopen_window_days: number;
+  auto_close_days: number;
+  branding: Record<string, unknown>;
+  config_version: number;
+};
+
+export type Config = {
+  teams: Team[];
+  categories: Category[];
+  priorities: Priority[];
+  statuses: Status[];
+  custom_fields: CustomField[];
+  routing_rules: RoutingRule[];
+  agents: Agent[];
+  settings: TenantSettings | null;
+};
+
+export type Ticket = {
+  tenant_id: string;
+  id: string;
+  number: string;
+  subject: string;
+  description: string;
+  requester_id: string;
+  assignee_id: string | null;
+  team_id: string | null;
+  category_id: string;
+  priority_id: string;
+  status_id: string;
+  custom_fields: Record<string, unknown>;
+  resolution_summary: string | null;
+  pending_reason: string | null;
+  version: number;
+  reopened_count: number;
+  first_responded_at: string | null;
+  resolved_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  status_key: string;
+  status_label: string;
+  status_stage: string;
+  category_name: string;
+  priority_key: string;
+  priority_label: string;
+  priority_rank: number;
+  requester_name: string;
+  assignee_name: string | null;
+  team_name: string | null;
+};
+
+export type TicketComment = {
+  id: string;
+  body: string;
+  visibility: "public" | "internal";
+  author_name: string;
+  created_at: string;
+};
+
+export type StatusHistory = {
+  created_at: string;
+  from_label: string | null;
+  to_label: string;
+  actor_role: string;
+  actor_name: string | null;
+  reason: string | null;
+};
+
+export type AssignmentHistory = {
+  created_at: string;
+  actor_role: string;
+  actor_name: string | null;
+  source: string;
+  to_assignee_name: string | null;
+  to_team_name: string | null;
+};
+
+export type Transition = {
+  toStatusId: string;
+  key: string;
+  label: string;
+  stage: string;
+  requiresAssignee: boolean;
+  requiresSummary: boolean;
+  requiresReason: boolean;
+};
+
+export type TicketDetail = Ticket & {
+  comments: TicketComment[];
+  history: StatusHistory[];
+  assignments: AssignmentHistory[];
+  allowed_transitions: Transition[];
+};
+
+export type TicketList = {
+  items: Ticket[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
