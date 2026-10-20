@@ -93,13 +93,8 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
       - ./deploy/n8n/workflow.json:/workflow.json:ro
-    command:
-      - sh
-      - -c
-      - >-
-        n8n import:workflow --input=/workflow.json &&
-        (n8n update:workflow --id=opspilot-ticket-routing --active=true || true) &&
-        n8n start
+      - ./deploy/n8n/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     restart: unless-stopped
 
 volumes:
