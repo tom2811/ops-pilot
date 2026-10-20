@@ -162,10 +162,21 @@ export type Transition = {
   requiresReason: boolean;
 };
 
+export type Attachment = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  uploader_id: string;
+  uploader_name: string;
+  created_at: string;
+};
+
 export type TicketDetail = Ticket & {
   comments: TicketComment[];
   history: StatusHistory[];
   assignments: AssignmentHistory[];
+  attachments: Attachment[];
   allowed_transitions: Transition[];
 };
 

@@ -60,6 +60,8 @@ export function TicketDetailPage() {
   const [editPriorityId, setEditPriorityId] = useState("");
   const [editCustomFields, setEditCustomFields] = useState<Record<string, unknown>>({});
   const [editBusy, setEditBusy] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileKey, setFileKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,6 +249,52 @@ export function TicketDetailPage() {
     }
   }
 
+  async function uploadAttachment(): Promise<void> {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch(`/api/t/${tenantSlug}/tickets/${ticketId}/attachments`, {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? `Upload failed (${response.status})`);
+      }
+      setFile(null);
+      setFileKey((value) => value + 1);
+      await reload("Attachment uploaded.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeAttachment(id: string): Promise<void> {
+    if (!window.confirm("Delete this attachment?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await del(`/t/${tenantSlug}/attachments/${id}`);
+      await reload("Attachment deleted.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function formatSize(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   const canEdit =
     role === "tenant_admin" ||
     role === "agent" ||
@@ -401,6 +449,58 @@ export function TicketDetailPage() {
                 <strong>Waiting on</strong>
                 <p>{detail.pending_reason}</p>
               </div>
+            )}
+          </section>
+
+          <section className="card">
+            <div className="section-heading">
+              <h2>Attachments</h2>
+              <span className="muted small">{detail.attachments.length} files</span>
+            </div>
+            {detail.attachments.length === 0 ? (
+              <EmptyState title="No attachments">Files shared on this ticket appear here.</EmptyState>
+            ) : (
+              <ul className="attachment-list">
+                {detail.attachments.map((attachment) => (
+                  <li key={attachment.id}>
+                    <div>
+                      <a href={`/api/t/${tenantSlug}/attachments/${attachment.id}/download`}>
+                        {attachment.filename}
+                      </a>
+                      <span className="muted small">
+                        {formatSize(attachment.size)} · {attachment.uploader_name} · {formatDate(attachment.created_at)}
+                      </span>
+                    </div>
+                    {(role === "tenant_admin" || attachment.uploader_id === user?.id) && (
+                      <button
+                        className="button ghost small"
+                        disabled={busy}
+                        onClick={() => void removeAttachment(attachment.id)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {canEdit && (
+              <form
+                className="attachment-upload"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void uploadAttachment();
+                }}
+              >
+                <input
+                  key={fileKey}
+                  type="file"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                />
+                <button className="button secondary" disabled={!file || busy}>
+                  {busy ? "Uploading…" : "Upload"}
+                </button>
+              </form>
             )}
           </section>
 

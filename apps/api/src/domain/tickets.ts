@@ -923,6 +923,23 @@ export async function ticketDetail(
 
   const transitions = await allowedTransitions(client, tenantId, ticket.status_id, role);
   const customFields = await visibleCustomFields(client, tenantId, ticket.category_id, ticket.custom_fields, role);
+  const attachments = await client.query<{
+    id: string;
+    filename: string;
+    content_type: string;
+    size: number;
+    uploader_id: string;
+    uploader_name: string;
+    created_at: Date;
+  }>(
+    `select a.id, a.filename, a.content_type, a.size, a.uploader_id,
+            u.display_name as uploader_name, a.created_at
+     from ticket_attachments a
+     join users u on u.id = a.uploader_id
+     where a.tenant_id = $1 and a.ticket_id = $2
+     order by a.created_at`,
+    [tenantId, ticketId],
+  );
 
   return {
     ...ticket,
@@ -930,6 +947,7 @@ export async function ticketDetail(
     comments: comments.rows,
     history: history.rows,
     assignments: assignments.rows,
+    attachments: attachments.rows,
     allowed_transitions: transitions,
   };
 }

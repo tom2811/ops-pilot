@@ -1131,3 +1131,44 @@ dd {
 .config-list li .small {
   display: block;
 }
+
+.attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.attachment-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid #edf0f3;
+  font-size: 0.87rem;
+}
+
+.attachment-list li:last-child {
+  border-bottom: 0;
+}
+
+.attachment-list a {
+  display: block;
+  font-weight: 600;
+}
+
+.attachment-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #edf0f3;
+  flex-wrap: wrap;
+}
+
+.attachment-upload input {
+  max-width: 100%;
+}

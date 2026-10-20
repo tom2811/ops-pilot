@@ -19,6 +19,7 @@ x-app-env: &app-env
   SMTP_PASS: ${SMTP_PASS:-}
   SMTP_FROM: ${SMTP_FROM:-OpsPilot <no-reply@opspilot.local>}
   SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+  UPLOAD_DIR: /app/uploads
   LOG_LEVEL: info
 
 services:
@@ -57,6 +58,8 @@ services:
     environment: *app-env
     ports:
       - "3000:3000"
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       bootstrap:
         condition: service_completed_successfully
@@ -107,3 +110,4 @@ services:
 volumes:
   postgres_data:
   n8n_data:
+  uploads_data:

@@ -17,6 +17,7 @@ const envSchema = z.object({
   PUBLIC_API_URL: z.string().min(1).default("http://localhost:3000/api"),
   N8N_WEBHOOK_URL: z.string().min(1).optional(),
   N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
+  UPLOAD_DIR: z.string().min(1).default("./data/uploads"),
   LOG_LEVEL: z.string().default("info"),
 });
 
