@@ -55,6 +55,15 @@ export type TenantSettings = {
   config_version: number;
 };
 
+export type NotificationTemplate = {
+  id: string;
+  key: string;
+  subject: string;
+  body: string;
+  is_active: boolean;
+  updated_at: string;
+};
+
 export type Config = {
   teams: Team[];
   categories: Category[];

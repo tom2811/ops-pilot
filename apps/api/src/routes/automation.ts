@@ -4,12 +4,13 @@ import { z } from "zod";
 import {
   automationAssignSchema,
   notificationInputSchema,
+  renderTemplate,
   routePreviewSchema,
   runCompleteSchema,
 } from "@opspilot/core";
 import { hashToken } from "../auth.js";
 import { withRunToken } from "../db.js";
-import { AppError, conflict } from "../errors.js";
+import { AppError, badRequest, conflict } from "../errors.js";
 import { assignTicket } from "../domain/tickets.js";
 import { previewRoute } from "../domain/routing.js";
 
@@ -130,11 +131,26 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
   app.post("/runs/:runId/notify", async (req) => {
     const input = notificationInputSchema.parse(req.body);
     return withAutomation(req, async (client, run) => {
+      let subject = input.subject;
+      let body = input.body;
+      if (input.templateKey) {
+        const template = await client.query<{ subject: string; body: string }>(
+          `select subject, body from notification_templates
+           where tenant_id = $1 and key = $2 and is_active`,
+          [run.tenant_id, input.templateKey],
+        );
+        const row = template.rows[0];
+        if (!row) badRequest(`Unknown notification template: ${input.templateKey}`);
+        subject = renderTemplate(row.subject, input.variables);
+        body = renderTemplate(row.body, input.variables);
+      }
+      if (!subject || !body) badRequest("Notification subject and body are required");
+
       const dedupeKey = `${run.id}:${input.channel}:${input.ticketId}:${input.recipientId}`;
       const inserted = await client.query(
         `insert into notifications
-          (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, subject, body, sent_at)
-         values ($1, $2, $3, $4, $5, $6, 'sent', $7, $8, now())
+          (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, subject, body)
+         values ($1, $2, $3, $4, $5, $6, 'sent', $7, $8)
          on conflict (tenant_id, dedupe_key) do nothing
          returning id`,
         [
@@ -144,8 +160,8 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
           input.recipientId,
           input.channel,
           dedupeKey,
-          input.subject,
-          input.body,
+          subject,
+          body,
         ],
       );
       return { ok: true, deduped: (inserted.rowCount ?? 0) === 0 };

@@ -12,6 +12,13 @@ x-app-env: &app-env
   PUBLIC_API_URL: http://api:3000/api
   N8N_WEBHOOK_URL: http://n8n:5678/webhook/opspilot/ticket-created
   N8N_WEBHOOK_SECRET: dev-webhook-secret
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SMTP_FROM: ${SMTP_FROM:-OpsPilot <no-reply@opspilot.local>}
+  SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
   LOG_LEVEL: info
 
 services:

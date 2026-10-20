@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTicketNumber, matchesRoutingConditions } from "./index.js";
+import { formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
 describe("matchesRoutingConditions", () => {
@@ -56,5 +56,13 @@ describe("password hashing", () => {
     const stored = hashPassword("Passw0rd!");
     expect(verifyPassword("Passw0rd!", stored)).toBe(true);
     expect(verifyPassword("wrong-password", stored)).toBe(false);
+  });
+});
+
+describe("renderTemplate", () => {
+  it("replaces placeholders and leaves unknown values empty", () => {
+    expect(renderTemplate("Hi {{name}}, ticket {{number}} {{missing}}", { name: "Sam", number: 42 })).toBe(
+      "Hi Sam, ticket 42 ",
+    );
   });
 });

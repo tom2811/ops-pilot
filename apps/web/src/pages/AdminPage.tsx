@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
-import { api, errorMessage, humanize, post } from "../api.js";
+import { api, errorMessage, humanize, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
-import type { Config } from "../types.js";
+import type { Config, NotificationTemplate } from "../types.js";
 
 function slugify(value: string): string {
   return value
@@ -26,6 +26,7 @@ export function AdminPage() {
   const { memberships } = useAuth();
   const role = memberships.find((item) => item.slug === tenantSlug)?.role;
   const [config, setConfig] = useState<Config | null>(null);
+  const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,6 +71,21 @@ export function AdminPage() {
       cancelled = true;
     };
   }, [tenantSlug, refresh]);
+
+  useEffect(() => {
+    if (role !== "tenant_admin") return;
+    let cancelled = false;
+    api<{ items: NotificationTemplate[] }>(`/t/${tenantSlug}/notification-templates`)
+      .then((next) => {
+        if (!cancelled) setTemplates(next.items);
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(errorMessage(caught));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [role, tenantSlug, refresh]);
 
   if (role !== "tenant_admin") {
     return (
@@ -478,6 +494,88 @@ export function AdminPage() {
           )}
         </section>
       </div>
+
+      <section className="card">
+        <h2>Notification templates</h2>
+        <p className="muted">
+          Placeholders use <code>{"{{name}}"}</code> syntax. Notifications are queued for the worker and sent when SMTP is
+          configured.
+        </p>
+        <div className="stack">
+          {templates.map((template) => (
+            <TemplateEditor
+              key={template.id}
+              tenantSlug={tenantSlug}
+              template={template}
+              onSaved={() => setRefresh((value) => value + 1)}
+            />
+          ))}
+        </div>
+      </section>
     </div>
+  );
+}
+
+function TemplateEditor({
+  tenantSlug,
+  template,
+  onSaved,
+}: {
+  tenantSlug: string;
+  template: NotificationTemplate;
+  onSaved: () => void;
+}) {
+  const [subject, setSubject] = useState(template.subject);
+  const [body, setBody] = useState(template.body);
+  const [active, setActive] = useState(template.is_active);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function save(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await put(`/t/${tenantSlug}/notification-templates/${template.id}`, {
+        subject,
+        body,
+        isActive: active,
+      });
+      setSaved(true);
+      onSaved();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="template-editor" onSubmit={(event) => void save(event)}>
+      <div className="template-editor-head">
+        <strong>{humanize(template.key)}</strong>
+        <label className="check-row">
+          <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />
+          Active
+        </label>
+      </div>
+      <label>
+        Subject
+        <input value={subject} onChange={(event) => setSubject(event.target.value)} required maxLength={300} />
+      </label>
+      <label>
+        Body
+        <textarea value={body} onChange={(event) => setBody(event.target.value)} required rows={5} />
+      </label>
+      <div className="inline-fields">
+        <button className="button secondary" disabled={busy}>
+          {busy ? "Saving…" : "Save template"}
+        </button>
+        {saved && <span className="muted small">Saved</span>}
+        {error && <span className="error-text small">{error}</span>}
+      </div>
+    </form>
   );
 }

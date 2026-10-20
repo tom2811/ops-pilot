@@ -9,6 +9,7 @@ import { authRoutes } from "./routes/auth.js";
 import { ticketRoutes } from "./routes/tickets.js";
 import { configRoutes } from "./routes/config.js";
 import { automationRoutes } from "./routes/automation.js";
+import { notificationRoutes } from "./routes/notifications.js";
 import "./types.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,6 +54,7 @@ export async function buildApp() {
   await app.register(ticketRoutes, { prefix: "/api" });
   await app.register(configRoutes, { prefix: "/api" });
   await app.register(automationRoutes, { prefix: "/api/automation" });
+  await app.register(notificationRoutes, { prefix: "/api" });
 
   app.get("/api/health", async () => ({ ok: true }));
 

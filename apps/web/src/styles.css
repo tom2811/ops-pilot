@@ -1071,3 +1071,23 @@ dd {
     width: 100%;
   }
 }
+
+.template-editor {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.template-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.template-editor textarea {
+  min-height: 7rem;
+}

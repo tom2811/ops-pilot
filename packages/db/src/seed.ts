@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
+  DEFAULT_NOTIFICATION_TEMPLATES,
   DEFAULT_PRIORITIES,
   DEFAULT_STATUSES,
   DEFAULT_TRANSITIONS,
@@ -242,6 +243,13 @@ async function main() {
             field.visibility,
             JSON.stringify(field.options ?? []),
           ],
+        );
+      }
+
+      for (const template of DEFAULT_NOTIFICATION_TEMPLATES) {
+        await client.query(
+          "insert into notification_templates (tenant_id, key, subject, body) values ($1, $2, $3, $4)",
+          [tenant.id, template.key, template.subject, template.body],
         );
       }
 

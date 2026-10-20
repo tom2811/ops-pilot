@@ -31,6 +31,32 @@ export const DEFAULT_PRIORITIES: Array<{ key: string; label: string; rank: numbe
   { key: "p4", label: "P4 - Low", rank: 4, color: "gray" },
 ];
 
+export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: string; body: string }> = [
+  {
+    key: "ticket_created",
+    subject: "Ticket #{{number}} created",
+    body: "We received \"{{subject}}\". Your request is queued with the service team.",
+  },
+  {
+    key: "ticket_replied",
+    subject: "New reply on ticket #{{number}}",
+    body: "{{authorName}} replied to \"{{subject}}\":\n\n{{body}}",
+  },
+  {
+    key: "ticket_resolved",
+    subject: "Ticket #{{number}} resolved",
+    body: "\"{{subject}}\" has been resolved.\n\n{{summary}}",
+  },
+];
+
+export function renderTemplate(template: string, variables: Record<string, unknown>): string {
+  return template.replace(/\{\{\s*([a-z0-9_.]+)\s*\}\}/gi, (_match, key: string) => {
+    const value = variables[key];
+    if (value === null || value === undefined) return "";
+    return Array.isArray(value) ? value.join(", ") : String(value);
+  });
+}
+
 type TransitionSeed = {
   from: string;
   to: string;
@@ -106,12 +132,24 @@ export const routePreviewSchema = z.object({
   customFields: z.record(z.string(), z.unknown()).default({}),
 });
 
-export const notificationInputSchema = z.object({
-  ticketId: z.string().uuid(),
-  recipientId: z.string().uuid(),
-  channel: z.string().min(1).max(30).default("email"),
-  subject: z.string().min(1).max(300),
-  body: z.string().min(1).max(20000),
+export const notificationInputSchema = z
+  .object({
+    ticketId: z.string().uuid(),
+    recipientId: z.string().uuid(),
+    channel: z.string().min(1).max(30).default("email"),
+    templateKey: z.string().min(1).max(80).optional(),
+    variables: z.record(z.string(), z.unknown()).default({}),
+    subject: z.string().min(1).max(300).optional(),
+    body: z.string().min(1).max(20000).optional(),
+  })
+  .refine((input) => Boolean(input.templateKey || (input.subject && input.body)), {
+    message: "Provide a templateKey or both subject and body",
+  });
+
+export const notificationTemplateInputSchema = z.object({
+  subject: z.string().trim().min(1).max(300),
+  body: z.string().trim().min(1).max(20000),
+  isActive: z.boolean().default(true),
 });
 
 export const runCompleteSchema = z.object({

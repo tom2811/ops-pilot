@@ -33,6 +33,10 @@ export function post<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
+export function put<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, { method: "PUT", body: JSON.stringify(body) });
+}
+
 export function formatDate(value: string | null): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, {
