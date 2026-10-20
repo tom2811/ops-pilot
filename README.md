@@ -81,6 +81,24 @@ docker compose up --build
 
 The one-shot `bootstrap` service creates the non-owner app role, applies migrations, and seeds the demo tenants. It re-seeds on every `docker compose up`, resetting demo data. The n8n container imports and activates `deploy/n8n/workflow.json`.
 
+## Operations
+
+- `GET /api/health` reports database readiness and returns `503` when PostgreSQL is unavailable; `GET /api/health/live` is a dependency-free liveness probe. The Compose API service uses the readiness endpoint.
+- Every request gets an `x-correlation-id` response header (a supplied UUID is reused) and Fastify logs include request and error context.
+- Responses set `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Permissions-Policy`; nginx adds a Content-Security-Policy for the UI. Login and password-reset endpoints are rate limited.
+- API and worker containers run with `no-new-privileges`.
+
+Back up and restore the Compose database:
+
+```bash
+./deploy/backup.sh                       # ./backups/opspilot-<timestamp>.sql.gz, 14-day retention
+./deploy/restore.sh ./backups/<file>.sql.gz
+```
+
+`BACKUP_DIR`, `RETENTION_DAYS`, `POSTGRES_SERVICE`, `POSTGRES_DB`, and `POSTGRES_USER` override the defaults. If restoring into a new database, run `pnpm db:role` first so the non-owner app role exists.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs typecheck, unit tests, the web build, database migrations and seed, an API smoke test against PostgreSQL, and both Docker image builds on every push and pull request.
+
 ## Tenancy and security
 
 - Shared schema, `tenant_id` on every tenant-owned row, RLS enabled and forced.

@@ -63,6 +63,14 @@ services:
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   worker:
@@ -74,6 +82,8 @@ services:
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   web:
@@ -83,7 +93,10 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   n8n:

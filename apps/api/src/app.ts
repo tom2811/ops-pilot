@@ -3,8 +3,10 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 import { env } from "./env.js";
+import { adminPool } from "./db.js";
 import { AppError } from "./errors.js";
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
@@ -33,10 +35,23 @@ export async function buildApp() {
     origin: env.WEB_ORIGIN,
     credentials: true,
   });
+  await app.register(rateLimit, { global: false });
 
   app.addHook("onRequest", async (req) => {
     const header = req.headers["x-correlation-id"];
     req.correlationId = typeof header === "string" && UUID.test(header) ? header : randomUUID();
+  });
+
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("x-correlation-id", req.correlationId);
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "strict-origin-when-cross-origin");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    if (env.SESSION_COOKIE_SECURE) {
+      reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+    }
+    return payload;
   });
 
   app.setErrorHandler((error, req, reply) => {
@@ -52,6 +67,7 @@ export async function buildApp() {
     if (shaped.code === "FST_REQ_FILE_TOO_LARGE") {
       return reply.status(413).send({ error: "File is larger than 10 MB" });
     }
+    if (shaped.statusCode === 429) return reply.status(429).send({ error: "Too many requests" });
     if (shaped.statusCode === 400) return reply.status(400).send({ error: shaped.message ?? "Bad request" });
 
     req.log.error({ err: error, correlationId: req.correlationId }, "request failed");
@@ -71,7 +87,16 @@ export async function buildApp() {
   await app.register(feedbackRoutes, { prefix: "/api" });
   await app.register(reportRoutes, { prefix: "/api" });
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health/live", async () => ({ ok: true }));
+  app.get("/api/health", async (_req, reply) => {
+    try {
+      await adminPool.query("select 1");
+      return { ok: true, database: "ok", uptime: Math.round(process.uptime()) };
+    } catch (error) {
+      app.log.error({ err: error }, "health check failed");
+      return reply.status(503).send({ ok: false, database: "unavailable" });
+    }
+  });
 
   return app;
 }

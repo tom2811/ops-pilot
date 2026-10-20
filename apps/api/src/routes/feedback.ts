@@ -46,7 +46,7 @@ export async function feedbackRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.post("/feedback/:token", async (req) => {
+  app.post("/feedback/:token", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
     const params = paramsSchema.parse(req.params);
     const input = feedbackSchema.parse(req.body);
     const result = await adminPool.query(

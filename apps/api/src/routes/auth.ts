@@ -32,7 +32,7 @@ function webUrl(path: string): string {
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/login", async (req, reply) => {
+  app.post("/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = loginSchema.parse(req.body);
     const user = await getLoginUser(input.email.toLowerCase());
     if (!user || !verifyPassword(input.password, user.passwordHash)) {
@@ -124,7 +124,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  app.post("/password/reset/request", async (req) => {
+  app.post("/password/reset/request", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (req) => {
     const input = passwordResetRequestSchema.parse(req.body);
     const result = await pool.query<{ id: string; email: string; display_name: string }>(
       "select id, email, display_name from users where email = $1 and is_active",
@@ -153,7 +153,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  app.post("/password/reset/confirm", async (req) => {
+  app.post("/password/reset/confirm", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (req) => {
     const input = passwordResetConfirmSchema.parse(req.body);
     const tokenHash = hashToken(input.token);
     const client = await pool.connect();

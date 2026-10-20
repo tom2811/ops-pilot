@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: opspilot
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: opspilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opspilot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      ADMIN_DATABASE_URL: postgres://postgres:opspilot@localhost:5432/opspilot
+      APP_DATABASE_URL: postgres://opspilot_app:opspilot_app@localhost:5432/opspilot
+      APP_DB_ROLE: opspilot_app
+      APP_DB_PASSWORD: opspilot_app
+      WEB_ORIGIN: http://localhost:5173
+      SESSION_COOKIE_SECURE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:role
+      - run: pnpm db:migrate
+      - run: pnpm db:seed
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: API smoke test
+        run: |
+          set -euo pipefail
+          pnpm --filter @opspilot/api start &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS -X POST -H 'content-type: application/json' \
+            -d '{"email":"admin@acme.test","password":"Passw0rd!"}' \
+            -c /tmp/opspilot-cookies http://localhost:3000/api/auth/login >/dev/null
+          curl -fsS -b /tmp/opspilot-cookies \
+            'http://localhost:3000/api/t/acme/reports?days=7' >/dev/null
+          curl -fsS -b /tmp/opspilot-cookies \
+            'http://localhost:3000/api/t/acme/users' >/dev/null
+
+  images:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile.api -t opspilot-api:ci .
+      - run: docker build -f Dockerfile.web -t opspilot-web:ci .
