@@ -8,7 +8,7 @@ import {
   ticketUpdateSchema,
   transitionSchema,
 } from "@opspilot/core";
-import { requireAuth, requireRole, requireTenant } from "../auth.js";
+import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { badRequest } from "../errors.js";
 import { previewRoute } from "../domain/routing.js";
@@ -114,7 +114,7 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete(
     "/t/:tenantSlug/tickets/:ticketId",
-    { preHandler: requireRole("tenant_admin") },
+    { preHandler: requirePermission("tickets.delete") },
     async (req, reply) => {
       const { userId, tenantId } = context(req);
       const params = ticketParams.parse(req.params);
@@ -149,7 +149,7 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     "/t/:tenantSlug/tickets/:ticketId/assign",
-    { preHandler: requireRole("tenant_admin", "agent") },
+    { preHandler: requirePermission("tickets.assign") },
     async (req) => {
       const { userId, tenantId } = context(req);
       const params = ticketParams.parse(req.params);

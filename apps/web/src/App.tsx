@@ -82,8 +82,12 @@ function TenantLayout() {
         </button>
         <nav className="main-nav">
           <NavLink to={`/t/${tenantSlug}/tickets`}>Tickets</NavLink>
-          {membership.role === "tenant_admin" && <NavLink to={`/t/${tenantSlug}/admin`}>Admin</NavLink>}
-          {membership.role === "tenant_admin" && <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>}
+          {membership.permissions.includes("config.manage") && (
+            <NavLink to={`/t/${tenantSlug}/admin`}>Admin</NavLink>
+          )}
+          {membership.permissions.includes("users.manage") && (
+            <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>
+          )}
         </nav>
         <div className="topbar-right">
           <select

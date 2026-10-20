@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { Role } from "@opspilot/core";
+import { DEFAULT_ROLE_PERMISSIONS, type Permission, type Role } from "@opspilot/core";
 import { env } from "./env.js";
 import { pool, withUser } from "./db.js";
 import { AppError } from "./errors.js";
@@ -73,17 +73,44 @@ export async function getSessionUser(req: FastifyRequest): Promise<AuthUser | nu
   };
 }
 
-export async function getMemberships(userId: string): Promise<Array<TenantContext & { name: string }>> {
+function effectivePermissions(
+  role: Role,
+  customRoleId: string | null,
+  customPermissions: unknown,
+): Permission[] {
+  if (!customRoleId) return DEFAULT_ROLE_PERMISSIONS[role];
+  if (!Array.isArray(customPermissions)) return [];
+  return customPermissions.filter((permission): permission is Permission =>
+    typeof permission === "string",
+  );
+}
+
+export async function getMemberships(userId: string): Promise<TenantContext[]> {
   return withUser(userId, async (client) => {
-    const result = await client.query<{ id: string; slug: string; name: string; role: Role }>(
-      `select t.id, t.slug, t.name, m.role
+    const result = await client.query<{
+      id: string;
+      slug: string;
+      name: string;
+      role: Role;
+      custom_role_id: string | null;
+      custom_permissions: unknown;
+    }>(
+      `select t.id, t.slug, t.name, m.role, m.custom_role_id,
+              cr.permissions as custom_permissions
        from memberships m
        join tenants t on t.id = m.tenant_id
+       left join custom_roles cr on cr.tenant_id = m.tenant_id and cr.id = m.custom_role_id
        where m.user_id = $1 and m.is_active and t.status = 'active'
        order by t.name`,
       [userId],
     );
-    return result.rows;
+    return result.rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      role: row.role,
+      permissions: effectivePermissions(row.role, row.custom_role_id, row.custom_permissions),
+    }));
   });
 }
 
@@ -107,24 +134,49 @@ export async function requireTenant(req: FastifyRequest, _reply: FastifyReply): 
   if (!req.authUser) throw new AppError(401, "Unauthorized");
   const slug = readTenantSlug(req);
 
-  const tenant = await withUser(req.authUser.id, async (client) => {
-    const result = await client.query<{ id: string; slug: string; name: string; role: Role }>(
-      `select t.id, t.slug, t.name, m.role
+  const row = await withUser(req.authUser.id, async (client) => {
+    const result = await client.query<{
+      id: string;
+      slug: string;
+      name: string;
+      role: Role;
+      custom_role_id: string | null;
+      custom_permissions: unknown;
+    }>(
+      `select t.id, t.slug, t.name, m.role, m.custom_role_id,
+              cr.permissions as custom_permissions
        from memberships m
        join tenants t on t.id = m.tenant_id
+       left join custom_roles cr on cr.tenant_id = m.tenant_id and cr.id = m.custom_role_id
        where m.user_id = $1 and m.is_active and t.slug = $2 and t.status = 'active'`,
       [req.authUser?.id, slug],
     );
     return result.rows[0] ?? null;
   });
 
-  if (!tenant) throw new AppError(404, "Tenant not found");
-  req.tenant = tenant;
+  if (!row) throw new AppError(404, "Tenant not found");
+  req.tenant = {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    role: row.role,
+    permissions: effectivePermissions(row.role, row.custom_role_id, row.custom_permissions),
+  };
 }
 
 export async function requirePlatformAdmin(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
   if (!req.authUser) throw new AppError(401, "Unauthorized");
   if (!req.authUser.isPlatformAdmin) throw new AppError(403, "Platform administrators only");
+}
+
+export function requirePermission(...permissions: Permission[]) {
+  return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
+    const tenant = req.tenant;
+    if (!tenant) throw new AppError(401, "Unauthorized");
+    if (!permissions.every((permission) => tenant.permissions.includes(permission))) {
+      throw new AppError(403, "Forbidden");
+    }
+  };
 }
 
 export function requireRole(...roles: Role[]) {

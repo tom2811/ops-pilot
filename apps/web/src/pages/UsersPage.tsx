@@ -1,22 +1,40 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
+import { PERMISSION_KEYS, type Permission } from "@opspilot/core";
 import { api, del, errorMessage, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, RoleBadge, Spinner } from "../components.js";
-import type { Config, PendingInvitation, Role, Team, TenantUser } from "../types.js";
+import type {
+  Config,
+  CustomRole,
+  PendingInvitation,
+  Role,
+  Team,
+  TenantUser,
+} from "../types.js";
 
-type UsersResponse = { users: TenantUser[]; invitations: PendingInvitation[] };
+type UsersResponse = { users: TenantUser[]; invitations: PendingInvitation[]; custom_roles: CustomRole[] };
 
-type Draft = { role: Role; isActive: boolean; teamIds: string[] };
+type Draft = { role: Role; isActive: boolean; teamIds: string[]; customRoleId: string | null };
 
 const ROLES: Role[] = ["tenant_admin", "agent", "employee"];
+
+const PERMISSION_LABELS: Record<Permission, string> = {
+  "config.manage": "Manage workspace configuration",
+  "users.manage": "Manage people and roles",
+  "tickets.assign": "Assign tickets",
+  "tickets.delete": "Delete tickets",
+  "reports.view": "View reports and dashboards",
+};
 
 export function UsersPage() {
   const { tenantSlug = "" } = useParams();
   const { memberships } = useAuth();
-  const role = memberships.find((item) => item.slug === tenantSlug)?.role;
+  const membership = memberships.find((item) => item.slug === tenantSlug);
+  const canManage = membership?.permissions.includes("users.manage") ?? false;
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
+  const [roles, setRoles] = useState<CustomRole[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
@@ -30,8 +48,13 @@ export function UsersPage() {
   const [inviteTeams, setInviteTeams] = useState<string[]>([]);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [roleName, setRoleName] = useState("");
+  const [roleBase, setRoleBase] = useState<Role>("agent");
+  const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
+
   useEffect(() => {
-    if (role !== "tenant_admin") return;
+    if (!canManage) return;
     let cancelled = false;
     Promise.all([
       api<UsersResponse>(`/t/${tenantSlug}/users`),
@@ -41,12 +64,18 @@ export function UsersPage() {
         if (cancelled) return;
         setUsers(data.users);
         setInvitations(data.invitations);
+        setRoles(data.custom_roles);
         setTeams(config.teams);
         setDrafts(
           Object.fromEntries(
             data.users.map((user) => [
               user.id,
-              { role: user.role, isActive: user.is_active, teamIds: user.team_ids },
+              {
+                role: user.role,
+                isActive: user.is_active,
+                teamIds: user.team_ids,
+                customRoleId: user.custom_role_id,
+              },
             ]),
           ),
         );
@@ -60,12 +89,12 @@ export function UsersPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantSlug, role, refresh]);
+  }, [tenantSlug, canManage, refresh]);
 
-  if (role !== "tenant_admin") {
+  if (!canManage) {
     return (
       <div className="card narrow">
-        <h1>Admins only</h1>
+        <h1>People managers only</h1>
         <p className="muted">You do not have permission to manage people in this workspace.</p>
       </div>
     );
@@ -91,6 +120,7 @@ export function UsersPage() {
         role: draft.role,
         isActive: draft.isActive,
         teamIds: draft.teamIds,
+        customRoleId: draft.customRoleId,
       });
       setNotice(`${user.name} updated.`);
       setRefresh((value) => value + 1);
@@ -139,6 +169,60 @@ export function UsersPage() {
     }
   }
 
+  function startRoleEdit(role: CustomRole): void {
+    setEditingRoleId(role.id);
+    setRoleName(role.name);
+    setRoleBase(role.base_role);
+    setRolePermissions(role.permissions.filter((item): item is Permission =>
+      (PERMISSION_KEYS as readonly string[]).includes(item),
+    ));
+  }
+
+  function resetRoleForm(): void {
+    setEditingRoleId(null);
+    setRoleName("");
+    setRoleBase("agent");
+    setRolePermissions([]);
+  }
+
+  async function saveRole(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const body = { name: roleName, baseRole: roleBase, permissions: rolePermissions };
+    try {
+      if (editingRoleId) {
+        await patch(`/t/${tenantSlug}/custom-roles/${editingRoleId}`, body);
+      } else {
+        await post(`/t/${tenantSlug}/custom-roles`, body);
+      }
+      setNotice(editingRoleId ? "Role updated." : "Role created.");
+      resetRoleForm();
+      setRefresh((value) => value + 1);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteRole(role: CustomRole): Promise<void> {
+    if (!window.confirm(`Delete the "${role.name}" role? Members will fall back to their base role.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await del(`/t/${tenantSlug}/custom-roles/${role.id}`);
+      setNotice("Role deleted.");
+      if (editingRoleId === role.id) resetRoleForm();
+      setRefresh((value) => value + 1);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function toggleTeam(userId: string, teamId: string): void {
     const draft = drafts[userId];
     if (!draft) return;
@@ -151,8 +235,8 @@ export function UsersPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Workspace" title="People">
-        <p className="muted">Invite teammates, set roles, and assign teams.</p>
+      <PageHeader eyebrow="Workspace" title="People and access">
+        <p className="muted">Invite teammates, assign teams, and build custom permission sets.</p>
       </PageHeader>
       <ErrorAlert message={error} />
       {notice && <div className="callout success">{notice}</div>}
@@ -186,7 +270,7 @@ export function UsersPage() {
               />
             </label>
             <label>
-              Role
+              Base role
               <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Role)}>
                 {ROLES.map((item) => (
                   <option key={item} value={item}>{humanize(item)}</option>
@@ -247,6 +331,83 @@ export function UsersPage() {
       </div>
 
       <section className="card" style={{ marginTop: "1.25rem" }}>
+        <div className="section-heading">
+          <h2>Custom roles</h2>
+          {editingRoleId && (
+            <button className="button ghost small" onClick={resetRoleForm}>Cancel edit</button>
+          )}
+        </div>
+        <div className="role-grid">
+          <form className="stack" onSubmit={(event) => void saveRole(event)}>
+            <label>
+              Role name
+              <input value={roleName} onChange={(event) => setRoleName(event.target.value)} required />
+            </label>
+            <label>
+              Base role
+              <select value={roleBase} onChange={(event) => setRoleBase(event.target.value as Role)}>
+                {ROLES.map((item) => (
+                  <option key={item} value={item}>{humanize(item)}</option>
+                ))}
+              </select>
+            </label>
+            <fieldset className="field-group">
+              <legend>Permissions</legend>
+              {PERMISSION_KEYS.map((permission) => (
+                <label key={permission} className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={rolePermissions.includes(permission)}
+                    onChange={(event) =>
+                      setRolePermissions((current) =>
+                        event.target.checked
+                          ? [...current, permission]
+                          : current.filter((item) => item !== permission),
+                      )
+                    }
+                  />
+                  {PERMISSION_LABELS[permission]}
+                </label>
+              ))}
+            </fieldset>
+            <button className="button" disabled={busy} type="submit">
+              {editingRoleId ? "Save role" : "Create role"}
+            </button>
+          </form>
+
+          <div className="role-list">
+            {roles.length === 0 ? (
+              <EmptyState title="No custom roles">Create one to grant a focused permission set.</EmptyState>
+            ) : (
+              roles.map((role) => (
+                <div key={role.id} className="role-card">
+                  <div>
+                    <strong>{role.name}</strong>
+                    <p className="muted small">
+                      {humanize(role.base_role)} · {role.member_count} member{role.member_count === 1 ? "" : "s"}
+                    </p>
+                    <p className="small">
+                      {role.permissions.length === 0
+                        ? "No extra permissions"
+                        : role.permissions.map((permission) => humanize(permission.replace(".", " "))).join(", ")}
+                    </p>
+                  </div>
+                  <div className="role-actions">
+                    <button className="button ghost small" disabled={busy} onClick={() => startRoleEdit(role)}>
+                      Edit
+                    </button>
+                    <button className="button ghost small" disabled={busy} onClick={() => void deleteRole(role)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="card" style={{ marginTop: "1.25rem" }}>
         <div className="section-heading"><h2>Members</h2></div>
         <div className="table-wrap">
           <table>
@@ -259,7 +420,9 @@ export function UsersPage() {
                   role: user.role,
                   isActive: user.is_active,
                   teamIds: user.team_ids,
+                  customRoleId: user.custom_role_id,
                 };
+                const roleValue = draft.customRoleId ? `custom:${draft.customRoleId}` : `builtin:${draft.role}`;
                 return (
                   <tr key={user.id}>
                     <td>
@@ -268,12 +431,36 @@ export function UsersPage() {
                     </td>
                     <td>
                       <select
-                        value={draft.role}
-                        onChange={(event) => updateDraft(user.id, { role: event.target.value as Role })}
+                        value={roleValue}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (value.startsWith("custom:")) {
+                            const role = roles.find((item) => item.id === value.slice(7));
+                            if (role) {
+                              updateDraft(user.id, { customRoleId: role.id, role: role.base_role });
+                            }
+                          } else {
+                            updateDraft(user.id, {
+                              customRoleId: null,
+                              role: value.slice(8) as Role,
+                            });
+                          }
+                        }}
                       >
-                        {ROLES.map((item) => (
-                          <option key={item} value={item}>{humanize(item)}</option>
-                        ))}
+                        <optgroup label="Built-in roles">
+                          {ROLES.map((item) => (
+                            <option key={item} value={`builtin:${item}`}>{humanize(item)}</option>
+                          ))}
+                        </optgroup>
+                        {roles.length > 0 && (
+                          <optgroup label="Custom roles">
+                            {roles.map((item) => (
+                              <option key={item.id} value={`custom:${item.id}`}>
+                                {item.name} ({humanize(item.base_role)})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     </td>
                     <td>

@@ -158,6 +158,32 @@ export const notificationInputSchema = z
     message: "Provide a templateKey or both subject and body",
   });
 
+export const PERMISSION_KEYS = [
+  "config.manage",
+  "users.manage",
+  "tickets.assign",
+  "tickets.delete",
+  "reports.view",
+] as const;
+
+export type Permission = (typeof PERMISSION_KEYS)[number];
+
+export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  tenant_admin: [...PERMISSION_KEYS],
+  agent: ["tickets.assign", "reports.view"],
+  employee: [],
+};
+
+export const permissionSchema = z.enum(PERMISSION_KEYS);
+
+export const customRoleInputSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  baseRole: z.enum(["tenant_admin", "agent", "employee"]),
+  permissions: z.array(permissionSchema).default([]),
+});
+
+export const customRoleUpdateSchema = customRoleInputSchema.partial();
+
 export const invitationInputSchema = z.object({
   email: z.string().email().max(320),
   role: z.enum(["tenant_admin", "agent", "employee"]),
@@ -173,6 +199,7 @@ export const membershipUpdateSchema = z.object({
   role: z.enum(["tenant_admin", "agent", "employee"]).optional(),
   isActive: z.boolean().optional(),
   teamIds: z.array(z.string().uuid()).optional(),
+  customRoleId: z.string().uuid().nullable().optional(),
 });
 
 export const passwordResetRequestSchema = z.object({

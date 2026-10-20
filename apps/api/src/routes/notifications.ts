@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { notificationTemplateInputSchema } from "@opspilot/core";
-import { requireAuth, requireRole, requireTenant } from "../auth.js";
+import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
 import { notFound } from "../errors.js";
@@ -19,7 +19,7 @@ function context(req: {
 export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
   app.addHook("preHandler", requireTenant);
-  app.addHook("preHandler", requireRole("tenant_admin"));
+  app.addHook("preHandler", requirePermission("config.manage"));
 
   app.get("/t/:tenantSlug/notification-templates", async (req) => {
     const { userId, tenantId } = context(req);

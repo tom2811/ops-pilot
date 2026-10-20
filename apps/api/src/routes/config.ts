@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { routingConditionsSchema, slaPolicyInputSchema, tenantSettingsInputSchema } from "@opspilot/core";
-import { requireAuth, requireRole, requireTenant } from "../auth.js";
+import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
 import { badRequest, notFound } from "../errors.js";
@@ -148,7 +148,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/teams", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/teams", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = teamInput.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
@@ -172,7 +172,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/categories", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/categories", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = categoryInput.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
@@ -197,7 +197,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/priorities", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/priorities", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = priorityInput.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
@@ -222,7 +222,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/sla-policies", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/sla-policies", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = slaPolicyInputSchema.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
@@ -256,7 +256,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/custom-fields", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/custom-fields", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = customFieldInput.parse(req.body);
     if ((input.type === "select" || input.type === "multiselect") && input.options.length === 0) {
@@ -296,7 +296,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/routing-rules", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.post("/t/:tenantSlug/routing-rules", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = routingRuleInput.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
@@ -321,7 +321,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return rule;
     });
   });
-  app.patch("/t/:tenantSlug/teams/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/teams/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = teamUpdate.parse(req.body);
@@ -337,7 +337,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/teams/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/teams/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -348,7 +348,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/categories/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/categories/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = categoryUpdate.parse(req.body);
@@ -373,7 +373,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/categories/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/categories/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -384,7 +384,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/priorities/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/priorities/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = priorityUpdate.parse(req.body);
@@ -401,7 +401,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/priorities/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/priorities/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -412,7 +412,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/custom-fields/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/custom-fields/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = customFieldUpdate.parse(req.body);
@@ -448,7 +448,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/custom-fields/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/custom-fields/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -462,7 +462,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/routing-rules/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/routing-rules/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = routingRuleUpdate.parse(req.body);
@@ -491,7 +491,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/routing-rules/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/routing-rules/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -502,7 +502,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/sla-policies/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/sla-policies/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     const input = slaPolicyUpdate.parse(req.body);
@@ -535,7 +535,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/sla-policies/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+  app.delete("/t/:tenantSlug/sla-policies/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
     await withTenant(tenantId, userId, async (client) => {
@@ -546,7 +546,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  app.patch("/t/:tenantSlug/settings", { preHandler: requireRole("tenant_admin") }, async (req) => {
+  app.patch("/t/:tenantSlug/settings", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const input = tenantSettingsInputSchema.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {

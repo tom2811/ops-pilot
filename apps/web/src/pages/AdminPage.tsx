@@ -33,7 +33,8 @@ function fieldKey(value: string): string {
 export function AdminPage() {
   const { tenantSlug = "" } = useParams();
   const { memberships } = useAuth();
-  const role = memberships.find((item) => item.slug === tenantSlug)?.role;
+  const membership = memberships.find((item) => item.slug === tenantSlug);
+  const canManage = membership?.permissions.includes("config.manage") ?? false;
   const [config, setConfig] = useState<Config | null>(null);
   const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +105,7 @@ export function AdminPage() {
   }, [tenantSlug, refresh]);
 
   useEffect(() => {
-    if (role !== "tenant_admin") return;
+    if (!canManage) return;
     let cancelled = false;
     api<{ items: NotificationTemplate[] }>(`/t/${tenantSlug}/notification-templates`)
       .then((next) => {
@@ -116,9 +117,9 @@ export function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, [role, tenantSlug, refresh]);
+  }, [canManage, tenantSlug, refresh]);
 
-  if (role !== "tenant_admin") {
+  if (!canManage) {
     return (
       <div className="card narrow">
         <h1>Admins only</h1>

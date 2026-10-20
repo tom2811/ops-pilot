@@ -1,4 +1,4 @@
-import type { Role } from "@opspilot/core";
+import type { Permission, Role } from "@opspilot/core";
 
 export type AuthUser = {
   id: string;
@@ -12,6 +12,7 @@ export type TenantContext = {
   slug: string;
   name: string;
   role: Role;
+  permissions: Permission[];
 };
 
 export type AutomationContext = {

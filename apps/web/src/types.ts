@@ -1,3 +1,5 @@
+import type { Permission } from "@opspilot/core";
+
 export type Role = "tenant_admin" | "agent" | "employee";
 
 export type User = {
@@ -12,6 +14,7 @@ export type Membership = {
   slug: string;
   name: string;
   role: Role;
+  permissions: Permission[];
 };
 
 export type Team = { id: string; slug: string; name: string };
@@ -195,6 +198,17 @@ export type TenantUser = {
   role: Role;
   is_active: boolean;
   team_ids: string[];
+  custom_role_id: string | null;
+  custom_role_name: string | null;
+  created_at: string;
+};
+
+export type CustomRole = {
+  id: string;
+  name: string;
+  base_role: Role;
+  permissions: string[];
+  member_count: number;
   created_at: string;
 };
 

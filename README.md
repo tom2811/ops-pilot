@@ -91,6 +91,8 @@ The one-shot `bootstrap` service creates the non-owner app role, applies migrati
 - Passwords use scrypt; sessions use random tokens stored as SHA-256 hashes in HttpOnly cookies.
 - Users can review and revoke their sessions, change passwords, and use one-time password-reset links.
 - Workspace admins invite people, assign roles and teams, deactivate members, and cannot remove the last active administrator.
+- Custom roles keep a base role for ticket lifecycle semantics while granting a tenant-defined permission set.
+- Permission checks cover configuration, people management, ticket assignment, ticket deletion, and reporting.
 - Invitation and reset tokens are single-use and stored as SHA-256 hashes.
 - Audit rows are append-only for the app role.
 
@@ -129,7 +131,9 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 | GET/POST | `/api/auth/invitations/:token[/accept]` | Inspect or accept an invitation |
 | GET | `/api/t/:tenantSlug/users` | Members and pending invitations |
 | POST/DELETE | `/api/t/:tenantSlug/invitations[/:id]` | Invite or revoke |
-| PATCH | `/api/t/:tenantSlug/users/:userId` | Update role, teams, or active state |
+| PATCH | `/api/t/:tenantSlug/users/:userId` | Update role, custom role, teams, or active state |
+| GET/POST | `/api/t/:tenantSlug/custom-roles` | List or create custom roles |
+| PATCH/DELETE | `/api/t/:tenantSlug/custom-roles/:id` | Update or delete custom roles |
 | GET/POST | `/api/platform/tenants` | List or onboard workspaces |
 | PATCH | `/api/platform/tenants/:id` | Suspend or reactivate a workspace |
 | GET | `/api/t/:tenantSlug/tickets` | Role-scoped list, filters, pagination |
@@ -159,11 +163,11 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 
 ## Scope
 
-Included: RLS tenancy, session auth and management, invitations, password reset, tenant roles, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, audit, outbox, idempotent automation, n8n workflow, responsive UI.
+Included: RLS tenancy, session auth and management, invitations, password reset, built-in and custom roles with permission checks, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, audit, outbox, idempotent automation, n8n workflow, responsive UI.
 
 Platform operators can onboard a workspace with a complete default configuration and email an administrator invitation; suspending a workspace immediately blocks tenant access.
 
-Deferred: custom roles, feedback/CSAT, dashboards and reporting, arbitrary workflow graphs.
+Deferred: feedback/CSAT, dashboards and reporting, arbitrary workflow graphs.
 
 ## Branching
 
