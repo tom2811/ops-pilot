@@ -2,9 +2,13 @@ import pg from "pg";
 import { env } from "./env.js";
 
 export const pool = new pg.Pool({ connectionString: env.APP_DATABASE_URL, max: 10 });
+export const adminPool = new pg.Pool({ connectionString: env.ADMIN_DATABASE_URL, max: 5 });
 
 pool.on("error", (error) => {
   console.error("postgres pool error", error);
+});
+adminPool.on("error", (error) => {
+  console.error("postgres admin pool error", error);
 });
 
 export async function withUser<T>(

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { errorMessage } from "../api.js";
 import { useAuth } from "../auth.js";
 
@@ -88,6 +88,7 @@ export function LoginPage() {
             <button className="button" disabled={busy} type="submit">
               {busy ? "Signing in…" : "Sign in"}
             </button>
+            <Link className="small" to="/forgot-password">Forgot your password?</Link>
           </form>
 
           <div className="demo-accounts">

@@ -13,14 +13,23 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function createSession(userId: string): Promise<{ token: string; expiresAt: Date }> {
+export async function createSession(
+  userId: string,
+  meta: { userAgent?: string | undefined; ip?: string | undefined } = {},
+): Promise<{ token: string; expiresAt: Date }> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   await pool.query(
-    "insert into sessions (user_id, token_hash, expires_at) values ($1, $2, $3)",
-    [userId, hashToken(token), expiresAt],
+    `insert into sessions (user_id, token_hash, expires_at, user_agent, ip)
+     values ($1, $2, $3, $4, $5)`,
+    [userId, hashToken(token), expiresAt, meta.userAgent ?? null, meta.ip ?? null],
   );
   return { token, expiresAt };
+}
+
+export function currentSessionHash(req: FastifyRequest): string | null {
+  const token = req.cookies[SESSION_COOKIE];
+  return token ? hashToken(token) : null;
 }
 
 export function setSessionCookie(reply: FastifyReply, token: string, expiresAt: Date): void {
@@ -42,10 +51,10 @@ export async function getSessionUser(req: FastifyRequest): Promise<AuthUser | nu
   if (!token) return null;
 
   const result = await pool.query<{ id: string; email: string; display_name: string }>(
-    `select u.id, u.email, u.display_name
-     from sessions s
-     join users u on u.id = s.user_id
-     where s.token_hash = $1 and s.expires_at > now() and u.is_active`,
+    `update sessions s set last_seen_at = now()
+     from users u
+     where s.token_hash = $1 and s.expires_at > now() and u.id = s.user_id and u.is_active
+     returning u.id, u.email, u.display_name`,
     [hashToken(token)],
   );
   const row = result.rows[0];

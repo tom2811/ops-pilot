@@ -186,3 +186,40 @@ export type TicketList = {
   page: number;
   pageSize: number;
 };
+
+export type TenantUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  is_active: boolean;
+  team_ids: string[];
+  created_at: string;
+};
+
+export type PendingInvitation = {
+  id: string;
+  email: string;
+  role: Role;
+  team_ids: string[];
+  expires_at: string;
+  created_at: string;
+};
+
+export type SessionInfo = {
+  id: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  user_agent: string | null;
+  ip: string | null;
+  is_current: boolean;
+};
+
+export type InvitationInfo = {
+  email: string;
+  role: Role;
+  tenantName: string;
+  tenantSlug: string;
+  existingUser: boolean;
+};

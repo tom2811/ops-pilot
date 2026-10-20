@@ -1172,3 +1172,60 @@ dd {
 .attachment-upload input {
   max-width: 100%;
 }
+
+/* People and account */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.team-checks {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.mono-break {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.account-link {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.account-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.session-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.session-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.session-list p {
+  margin: 0.15rem 0 0;
+}

@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { env } from "./env.js";
 import { AppError } from "./errors.js";
 import { authRoutes } from "./routes/auth.js";
+import { userRoutes } from "./routes/users.js";
 import { ticketRoutes } from "./routes/tickets.js";
 import { configRoutes } from "./routes/config.js";
 import { automationRoutes } from "./routes/automation.js";
@@ -62,6 +63,7 @@ export async function buildApp() {
   await app.register(automationRoutes, { prefix: "/api/automation" });
   await app.register(notificationRoutes, { prefix: "/api" });
   await app.register(attachmentRoutes, { prefix: "/api" });
+  await app.register(userRoutes, { prefix: "/api" });
 
   app.get("/api/health", async () => ({ ok: true }));
 

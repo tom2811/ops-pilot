@@ -82,6 +82,14 @@ type NotificationRow = {
   recipient_email: string;
 };
 
+type EmailRow = {
+  id: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  attempts: number;
+};
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -354,6 +362,72 @@ async function processNotifications(): Promise<void> {
   }
 }
 
+async function claimEmails(limit = 10): Promise<EmailRow[]> {
+  await pool.query(
+    `update email_messages set locked_until = null
+     where delivery_status = 'pending' and locked_until < now()`,
+  );
+  const result = await pool.query<EmailRow>(
+    `update email_messages m set locked_until = now() + interval '5 minutes'
+     from (
+       select id from email_messages
+       where delivery_status = 'pending' and next_attempt_at <= now()
+         and (locked_until is null or locked_until < now())
+       order by next_attempt_at, created_at
+       for update skip locked
+       limit $1
+     ) claimed
+     where m.id = claimed.id
+     returning m.id, m.recipient, m.subject, m.body, m.attempts`,
+    [limit],
+  );
+  return result.rows;
+}
+
+async function processEmails(): Promise<void> {
+  const emails = await claimEmails();
+  for (const email of emails) {
+    if (!mailer) {
+      await pool.query(
+        `update email_messages
+         set delivery_status = 'skipped', last_error = 'SMTP is not configured', locked_until = null
+         where id = $1`,
+        [email.id],
+      );
+      continue;
+    }
+    const attempts = email.attempts + 1;
+    try {
+      const messageId = await mailer.send({
+        to: email.recipient,
+        subject: email.subject,
+        text: email.body,
+      });
+      await pool.query(
+        `update email_messages
+         set delivery_status = 'sent', sent_at = now(), attempts = $2,
+             provider_message_id = $3, last_error = null, locked_until = null
+         where id = $1`,
+        [email.id, attempts, messageId ?? null],
+      );
+      log("email_sent", { emailId: email.id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const dead = attempts >= 5;
+      await pool.query(
+        `update email_messages
+         set delivery_status = $2, attempts = $3,
+             next_attempt_at = case when $2 = 'pending' then now() + ($4::text || ' seconds')::interval
+                                    else next_attempt_at end,
+             last_error = $5, locked_until = null
+         where id = $1`,
+        [email.id, dead ? "failed" : "pending", attempts, String(Math.min(60, 2 ** attempts)), message.slice(0, 2000)],
+      );
+      log("email_failed", { emailId: email.id, attempts, dead, error: message });
+    }
+  }
+}
+
 async function deliver(event: OutboxRow): Promise<void> {
   if (event.event_type !== "ticket.created") {
     await pool.query("update outbox_events set status = 'delivered', delivered_at = now(), locked_until = null where id = $1", [
@@ -444,6 +518,7 @@ async function loop(): Promise<void> {
         nextMaintenance = Date.now() + workerEnv.MAINTENANCE_INTERVAL_MS;
       }
       await processNotifications();
+      await processEmails();
       const event = await claimEvent();
       if (!event) {
         await sleep(workerEnv.WORKER_POLL_MS);

@@ -7,6 +7,7 @@ config();
 
 const envSchema = z.object({
   APP_DATABASE_URL: z.string().min(1),
+  ADMIN_DATABASE_URL: z.string().min(1),
   WORKER_DATABASE_URL: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   WEB_ORIGIN: z.string().min(1).default("http://localhost:5173"),

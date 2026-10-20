@@ -1,9 +1,13 @@
 import { Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "./auth.js";
+import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
+import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
+import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordPages.js";
 import { TicketDetailPage } from "./pages/TicketDetailPage.js";
 import { TicketsPage } from "./pages/TicketsPage.js";
+import { UsersPage } from "./pages/UsersPage.js";
 
 function Loading({ label = "Loading…" }: { label?: string }) {
   return (
@@ -72,6 +76,7 @@ function TenantLayout() {
         <nav className="main-nav">
           <NavLink to={`/t/${tenantSlug}/tickets`}>Tickets</NavLink>
           {membership.role === "tenant_admin" && <NavLink to={`/t/${tenantSlug}/admin`}>Admin</NavLink>}
+          {membership.role === "tenant_admin" && <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>}
         </nav>
         <div className="topbar-right">
           <select
@@ -85,6 +90,7 @@ function TenantLayout() {
               </option>
             ))}
           </select>
+          <NavLink className="account-link" to="/account">Account</NavLink>
           <div className="user-chip" title={user.email}>
             <span>{user.displayName}</span>
             <span className="role-dot">{membership.role.replace("_", " ")}</span>
@@ -125,11 +131,16 @@ export function App() {
     <Routes>
       <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/invite/:token" element={<InvitationPage />} />
+      <Route path="/account" element={<AccountPage />} />
       <Route path="/t/:tenantSlug" element={<TenantLayout />}>
         <Route index element={<Navigate to="tickets" replace />} />
         <Route path="tickets" element={<TicketsPage />} />
         <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="users" element={<UsersPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

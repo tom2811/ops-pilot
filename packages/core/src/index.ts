@@ -158,6 +158,37 @@ export const notificationInputSchema = z
     message: "Provide a templateKey or both subject and body",
   });
 
+export const invitationInputSchema = z.object({
+  email: z.string().email().max(320),
+  role: z.enum(["tenant_admin", "agent", "employee"]),
+  teamIds: z.array(z.string().uuid()).default([]),
+});
+
+export const invitationAcceptSchema = z.object({
+  displayName: z.string().trim().min(2).max(120).optional(),
+  password: z.string().min(8).max(200).optional(),
+});
+
+export const membershipUpdateSchema = z.object({
+  role: z.enum(["tenant_admin", "agent", "employee"]).optional(),
+  isActive: z.boolean().optional(),
+  teamIds: z.array(z.string().uuid()).optional(),
+});
+
+export const passwordResetRequestSchema = z.object({
+  email: z.string().email().max(320),
+});
+
+export const passwordResetConfirmSchema = z.object({
+  token: z.string().min(10).max(200),
+  password: z.string().min(8).max(200),
+});
+
+export const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+
 export const ticketUpdateSchema = z.object({
   subject: z.string().trim().min(3).max(200).optional(),
   description: z.string().trim().min(1).max(20000).optional(),

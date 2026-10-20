@@ -4,7 +4,7 @@ Multi-tenant IT service desk with a TypeScript API, React UI, PostgreSQL row-lev
 
 ## Status
 
-Milestone 1 is implemented: tenant-aware ticket core, session auth, role-scoped queues, configuration, comments, lifecycle transitions, audit history, transactional outbox, and a ticket-created n8n routing workflow.
+The product core is implemented: tenant-aware ticket lifecycle, role-scoped queues, configuration, SLA tracking, attachments, queued email/SMTP delivery, audit history, transactional outbox, n8n routing, and workspace people management with invitations, password reset, and session controls.
 
 ## Stack
 
@@ -88,6 +88,9 @@ The one-shot `bootstrap` service creates the non-owner app role, applies migrati
 - Global users with per-tenant memberships; tenant URLs are path-based (`/t/:tenantSlug`).
 - Platform admins are modeled separately and are not tenant members by default.
 - Passwords use scrypt; sessions use random tokens stored as SHA-256 hashes in HttpOnly cookies.
+- Users can review and revoke their sessions, change passwords, and use one-time password-reset links.
+- Workspace admins invite people, assign roles and teams, deactivate members, and cannot remove the last active administrator.
+- Invitation and reset tokens are single-use and stored as SHA-256 hashes.
 - Audit rows are append-only for the app role.
 
 Milestone 1 fixes the lifecycle stages (`new`, `open`, `in_progress`, `pending`, `resolved`, `closed`). Tenants configure teams, categories, priorities, custom fields, routing rules, and notification text. Custom roles, arbitrary transition graphs, and per-tenant SMTP are deferred.
@@ -118,6 +121,14 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 | POST | `/api/auth/login` | Email/password session |
 | POST | `/api/auth/logout` | Clear session |
 | GET | `/api/auth/me` | User and memberships |
+| GET/DELETE | `/api/auth/sessions[/:id]` | List or revoke active sessions |
+| POST | `/api/auth/password/change` | Change current password |
+| POST | `/api/auth/password/reset/request` | Queue a reset link |
+| POST | `/api/auth/password/reset/confirm` | Consume a reset token |
+| GET/POST | `/api/auth/invitations/:token[/accept]` | Inspect or accept an invitation |
+| GET | `/api/t/:tenantSlug/users` | Members and pending invitations |
+| POST/DELETE | `/api/t/:tenantSlug/invitations[/:id]` | Invite or revoke |
+| PATCH | `/api/t/:tenantSlug/users/:userId` | Update role, teams, or active state |
 | GET | `/api/t/:tenantSlug/tickets` | Role-scoped list, filters, pagination |
 | POST | `/api/t/:tenantSlug/tickets` | Create ticket |
 | GET | `/api/t/:tenantSlug/tickets/:id` | Detail, visible comments, history, transitions |
@@ -145,9 +156,9 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 
 ## Scope
 
-Included: RLS tenancy, session auth, tenant roles, configuration, custom fields, routing, ticket lifecycle, comments, assignment, audit, outbox, idempotent automation, n8n workflow, responsive UI.
+Included: RLS tenancy, session auth and management, invitations, password reset, tenant roles, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, audit, outbox, idempotent automation, n8n workflow, responsive UI.
 
-Deferred: SLA engine, real email delivery, attachments, invitations, feedback, dashboards, platform admin UI, custom roles, arbitrary workflow graphs.
+Deferred: custom roles, feedback/CSAT, dashboards and reporting, platform admin UI, arbitrary workflow graphs.
 
 ## Branching
 
