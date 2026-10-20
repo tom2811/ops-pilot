@@ -202,6 +202,11 @@ export const membershipUpdateSchema = z.object({
   customRoleId: z.string().uuid().nullable().optional(),
 });
 
+export const feedbackSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(2000).optional(),
+});
+
 export const passwordResetRequestSchema = z.object({
   email: z.string().email().max(320),
 });

@@ -4,7 +4,7 @@ Multi-tenant IT service desk with a TypeScript API, React UI, PostgreSQL row-lev
 
 ## Status
 
-The product core is implemented: tenant-aware ticket lifecycle, role-scoped queues, configuration, SLA tracking, attachments, queued email/SMTP delivery, audit history, transactional outbox, n8n routing, workspace people management, and platform tenant onboarding.
+The product core is implemented: tenant-aware ticket lifecycle, role-scoped queues, configuration, SLA tracking, attachments, queued email/SMTP delivery, audit history, transactional outbox, n8n routing, workspace people management, custom roles, platform tenant onboarding, reporting dashboards, and feedback/CSAT collection.
 
 ## Stack
 
@@ -92,11 +92,11 @@ The one-shot `bootstrap` service creates the non-owner app role, applies migrati
 - Users can review and revoke their sessions, change passwords, and use one-time password-reset links.
 - Workspace admins invite people, assign roles and teams, deactivate members, and cannot remove the last active administrator.
 - Custom roles keep a base role for ticket lifecycle semantics while granting a tenant-defined permission set.
-- Permission checks cover configuration, people management, ticket assignment, ticket deletion, and reporting.
+- Permission checks cover configuration, people management, ticket assignment, ticket deletion, and reporting. Built-in agents receive assignment and reporting permissions by default.
 - Invitation and reset tokens are single-use and stored as SHA-256 hashes.
 - Audit rows are append-only for the app role.
 
-Milestone 1 fixes the lifecycle stages (`new`, `open`, `in_progress`, `pending`, `resolved`, `closed`). Tenants configure teams, categories, priorities, custom fields, routing rules, and notification text. Custom roles, arbitrary transition graphs, and per-tenant SMTP are deferred.
+The lifecycle stages are fixed (`new`, `open`, `in_progress`, `pending`, `resolved`, `closed`). Tenants configure teams, categories, priorities, custom fields, routing rules, notification text, and custom roles. Arbitrary transition graphs and per-tenant SMTP are deferred.
 
 ## Configuration and routing
 
@@ -142,6 +142,8 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 | POST | `/api/t/:tenantSlug/tickets/:id/transitions` | Version-checked lifecycle move |
 | POST | `/api/t/:tenantSlug/tickets/:id/assign` | Team/assignee update |
 | POST | `/api/t/:tenantSlug/tickets/:id/comments` | Public reply or internal note |
+| GET | `/api/t/:tenantSlug/reports?days=30` | Visibility-scoped summary, trends, and CSAT |
+| GET/POST | `/api/feedback/:token` | Public feedback page data and rating submission |
 | POST | `/api/t/:tenantSlug/routing/preview` | Routing preview |
 | GET | `/api/t/:tenantSlug/config` | Tenant configuration |
 | POST | `/api/t/:tenantSlug/{teams,categories,priorities,custom-fields,routing-rules}` | Admin config |
@@ -163,11 +165,13 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 
 ## Scope
 
-Included: RLS tenancy, session auth and management, invitations, password reset, built-in and custom roles with permission checks, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, audit, outbox, idempotent automation, n8n workflow, responsive UI.
+Included: RLS tenancy, session auth and management, invitations, password reset, built-in and custom roles with permission checks, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, feedback/CSAT links with public rating pages, reports dashboards, audit, outbox, idempotent automation, n8n workflow, responsive UI.
 
 Platform operators can onboard a workspace with a complete default configuration and email an administrator invitation; suspending a workspace immediately blocks tenant access.
 
-Deferred: feedback/CSAT, dashboards and reporting, arbitrary workflow graphs.
+Resolving or closing a ticket queues a one-time feedback link valid for 30 days. Ratings and comments appear in workspace reports for users with `reports.view`; admins see everything, agents see their teams and assignments, and employees see only their own tickets.
+
+Deferred: arbitrary workflow graphs and per-tenant SMTP.
 
 ## Branching
 

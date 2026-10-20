@@ -3,6 +3,7 @@ import type pg from "pg";
 import type { Role, Stage } from "@opspilot/core";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
+import { requestFeedback } from "./feedback.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import {
   filterVisibleCustomFields,
@@ -681,6 +682,14 @@ export async function applyTransition(
     stage: targetStatus.stage,
     actorRole: role,
   });
+
+  if (
+    (targetStatus.stage === "resolved" || targetStatus.stage === "closed") &&
+    ticket.status_stage !== "resolved" &&
+    ticket.status_stage !== "closed"
+  ) {
+    await requestFeedback(client, tenantId, ticketId);
+  }
 
   if (role === "employee") {
     return {

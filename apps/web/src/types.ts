@@ -249,3 +249,47 @@ export type PlatformTenant = {
   ticket_count: number;
   pending_invitations: number;
 };
+
+export type ReportBucket = { label: string; count: number };
+
+export type ReportSummary = {
+  total: number;
+  open: number;
+  unassigned: number;
+  sla_breached: number;
+  resolved_week: number;
+  created_period: number;
+  avg_resolution_hours: number;
+  avg_response_minutes: number;
+};
+
+export type ReportTrendPoint = { day: string; created: number; resolved: number };
+
+export type ReportFeedback = {
+  rating: number;
+  comment: string | null;
+  submitted_at: string;
+  number: number;
+  subject: string;
+  requester_name: string;
+};
+
+export type Report = {
+  periodDays: number;
+  summary: ReportSummary;
+  by_status: (ReportBucket & { stage: string })[];
+  by_priority: (ReportBucket & { color: string })[];
+  by_team: ReportBucket[];
+  trend: ReportTrendPoint[];
+  csat: { average: number; responses: number; comments: number };
+  recent_feedback: ReportFeedback[];
+};
+
+export type FeedbackInfo = {
+  ticketNumber: number;
+  ticketSubject: string;
+  tenantName: string;
+  submitted: boolean;
+  rating: number | null;
+  comment: string | null;
+};

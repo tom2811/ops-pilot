@@ -4,8 +4,10 @@ import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
 import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
+import { FeedbackPage } from "./pages/FeedbackPage.js";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordPages.js";
 import { PlatformPage } from "./pages/PlatformPage.js";
+import { ReportsPage } from "./pages/ReportsPage.js";
 import { TicketDetailPage } from "./pages/TicketDetailPage.js";
 import { TicketsPage } from "./pages/TicketsPage.js";
 import { UsersPage } from "./pages/UsersPage.js";
@@ -85,6 +87,9 @@ function TenantLayout() {
           {membership.permissions.includes("config.manage") && (
             <NavLink to={`/t/${tenantSlug}/admin`}>Admin</NavLink>
           )}
+          {membership.permissions.includes("reports.view") && (
+            <NavLink to={`/t/${tenantSlug}/reports`}>Reports</NavLink>
+          )}
           {membership.permissions.includes("users.manage") && (
             <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>
           )}
@@ -146,6 +151,7 @@ export function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/invite/:token" element={<InvitationPage />} />
+      <Route path="/feedback" element={<FeedbackPage />} />
       <Route path="/account" element={<AccountPage />} />
       <Route path="/platform" element={<PlatformPage />} />
       <Route path="/t/:tenantSlug" element={<TenantLayout />}>
@@ -153,6 +159,7 @@ export function App() {
         <Route path="tickets" element={<TicketsPage />} />
         <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="reports" element={<ReportsPage />} />
         <Route path="users" element={<UsersPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
