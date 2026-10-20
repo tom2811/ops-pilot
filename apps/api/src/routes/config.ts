@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { routingConditionsSchema, slaPolicyInputSchema } from "@opspilot/core";
+import { routingConditionsSchema, slaPolicyInputSchema, tenantSettingsInputSchema } from "@opspilot/core";
 import { requireAuth, requireRole, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
-import { badRequest } from "../errors.js";
+import { badRequest, notFound } from "../errors.js";
 
 const slug = z
   .string()
@@ -51,6 +51,14 @@ const routingRuleInput = z.object({
   teamId: z.string().uuid(),
   sortOrder: z.number().int().default(0),
 });
+const entityParams = z.object({ tenantSlug: z.string().min(1), id: z.string().uuid() });
+
+const teamUpdate = teamInput.partial();
+const categoryUpdate = categoryInput.partial();
+const priorityUpdate = priorityInput.partial();
+const customFieldUpdate = customFieldInput.partial();
+const routingRuleUpdate = routingRuleInput.partial();
+const slaPolicyUpdate = slaPolicyInputSchema.partial();
 
 function tenantContext(req: {
   authUser?: { id: string };
@@ -313,4 +321,246 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return rule;
     });
   });
+  app.patch("/t/:tenantSlug/teams/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = teamUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update teams set slug = coalesce($3, slug), name = coalesce($4, name)
+         where tenant_id = $1 and id = $2 returning id, slug, name`,
+        [tenantId, id, input.slug ?? null, input.name ?? null],
+      );
+      if (!result.rows[0]) notFound("Team not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.team_updated", "team", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/teams/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query("update teams set is_active = false where tenant_id = $1 and id = $2", [tenantId, id]);
+      if ((result.rowCount ?? 0) === 0) notFound("Team not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.team_deactivated", "team", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/categories/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = categoryUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update categories set slug = coalesce($3, slug), name = coalesce($4, name),
+                default_team_id = case when $5 then $6 else default_team_id end
+         where tenant_id = $1 and id = $2
+         returning id, slug, name, default_team_id`,
+        [
+          tenantId,
+          id,
+          input.slug ?? null,
+          input.name ?? null,
+          Object.hasOwn(input, "defaultTeamId"),
+          input.defaultTeamId ?? null,
+        ],
+      );
+      if (!result.rows[0]) notFound("Category not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.category_updated", "category", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/categories/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query("update categories set is_active = false where tenant_id = $1 and id = $2", [tenantId, id]);
+      if ((result.rowCount ?? 0) === 0) notFound("Category not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.category_deactivated", "category", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/priorities/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = priorityUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update priorities set key = coalesce($3, key), label = coalesce($4, label),
+                rank = coalesce($5, rank), color = coalesce($6, color)
+         where tenant_id = $1 and id = $2 returning id, key, label, rank, color`,
+        [tenantId, id, input.key ?? null, input.label ?? null, input.rank ?? null, input.color ?? null],
+      );
+      if (!result.rows[0]) notFound("Priority not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.priority_updated", "priority", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/priorities/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query("update priorities set is_active = false where tenant_id = $1 and id = $2", [tenantId, id]);
+      if ((result.rowCount ?? 0) === 0) notFound("Priority not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.priority_deactivated", "priority", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/custom-fields/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = customFieldUpdate.parse(req.body);
+    if ((input.type === "select" || input.type === "multiselect") && input.options && input.options.length === 0) {
+      badRequest("Select fields need at least one option");
+    }
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update custom_field_definitions set
+           label = coalesce($3, label), type = coalesce($4, type),
+           required = coalesce($5, required), visibility = coalesce($6, visibility),
+           options = case when $7::jsonb is null then options else $7::jsonb end,
+           applies_to_category_id = case when $8 then $9 else applies_to_category_id end,
+           sort_order = coalesce($10, sort_order)
+         where tenant_id = $1 and id = $2
+         returning id, key, label, type, required, visibility, options, applies_to_category_id, sort_order`,
+        [
+          tenantId,
+          id,
+          input.label,
+          input.type,
+          input.required,
+          input.visibility,
+          input.options ? JSON.stringify(input.options) : null,
+          Object.hasOwn(input, "appliesToCategoryId"),
+          input.appliesToCategoryId ?? null,
+          input.sortOrder,
+        ],
+      );
+      if (!result.rows[0]) notFound("Custom field not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.custom_field_updated", "custom_field", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/custom-fields/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        "update custom_field_definitions set is_active = false where tenant_id = $1 and id = $2",
+        [tenantId, id],
+      );
+      if ((result.rowCount ?? 0) === 0) notFound("Custom field not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.custom_field_deactivated", "custom_field", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/routing-rules/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = routingRuleUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update routing_rules set
+           name = coalesce($3, name),
+           conditions = case when $4::jsonb is null then conditions else $4::jsonb end,
+           team_id = coalesce($5, team_id),
+           sort_order = coalesce($6, sort_order),
+           version = version + 1, updated_at = now()
+         where tenant_id = $1 and id = $2
+         returning id, name, conditions, team_id, sort_order, version`,
+        [
+          tenantId,
+          id,
+          input.name ?? null,
+          input.conditions ? JSON.stringify(input.conditions) : null,
+          input.teamId ?? null,
+          input.sortOrder ?? null,
+        ],
+      );
+      if (!result.rows[0]) notFound("Routing rule not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.routing_rule_updated", "routing_rule", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/routing-rules/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query("update routing_rules set is_active = false where tenant_id = $1 and id = $2", [tenantId, id]);
+      if ((result.rowCount ?? 0) === 0) notFound("Routing rule not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.routing_rule_deactivated", "routing_rule", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/sla-policies/:id", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = slaPolicyUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update sla_policies set
+           name = coalesce($3, name),
+           priority_id = case when $4 then $5 else priority_id end,
+           category_id = case when $6 then $7 else category_id end,
+           response_minutes = coalesce($8, response_minutes),
+           resolution_minutes = coalesce($9, resolution_minutes),
+           updated_at = now()
+         where tenant_id = $1 and id = $2
+         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active`,
+        [
+          tenantId,
+          id,
+          input.name,
+          Object.hasOwn(input, "priorityId"),
+          input.priorityId ?? null,
+          Object.hasOwn(input, "categoryId"),
+          input.categoryId ?? null,
+          input.responseMinutes,
+          input.resolutionMinutes,
+        ],
+      );
+      if (!result.rows[0]) notFound("SLA policy not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.sla_policy_updated", "sla_policy", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/sla-policies/:id", { preHandler: requireRole("tenant_admin") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query("update sla_policies set is_active = false where tenant_id = $1 and id = $2", [tenantId, id]);
+      if ((result.rowCount ?? 0) === 0) notFound("SLA policy not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.sla_policy_deactivated", "sla_policy", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.patch("/t/:tenantSlug/settings", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const input = tenantSettingsInputSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update tenant_settings set timezone = $2, ticket_prefix = $3,
+                reopen_window_days = $4, auto_close_days = $5,
+                config_version = config_version + 1, updated_at = now()
+         where tenant_id = $1
+         returning timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version`,
+        [tenantId, input.timezone, input.ticketPrefix, input.reopenWindowDays, input.autoCloseDays],
+      );
+      await writeAudit(client, tenantId, { id: userId, role }, "config.settings_updated", "tenant_settings", tenantId, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
 }

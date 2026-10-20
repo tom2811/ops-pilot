@@ -37,6 +37,14 @@ export function put<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 }
 
+export function patch<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function del(path: string): Promise<void> {
+  return api<void>(path, { method: "DELETE" });
+}
+
 export function formatDate(value: string | null): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, {

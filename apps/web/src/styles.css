@@ -1116,3 +1116,18 @@ dd {
   background: #e7f6ed;
   color: #17663a;
 }
+
+.config-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.config-list li > div:first-child {
+  min-width: 0;
+}
+
+.config-list li strong,
+.config-list li .small {
+  display: block;
+}

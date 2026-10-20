@@ -158,6 +158,27 @@ export const notificationInputSchema = z
     message: "Provide a templateKey or both subject and body",
   });
 
+export const ticketUpdateSchema = z.object({
+  subject: z.string().trim().min(3).max(200).optional(),
+  description: z.string().trim().min(1).max(20000).optional(),
+  categoryId: z.string().uuid().optional(),
+  priorityId: z.string().uuid().optional(),
+  customFields: z.record(z.string(), z.unknown()).optional(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+
+export const tenantSettingsInputSchema = z.object({
+  timezone: z.string().trim().min(1).max(80),
+  ticketPrefix: z
+    .string()
+    .trim()
+    .min(2)
+    .max(10)
+    .regex(/^[A-Z0-9]+$/),
+  reopenWindowDays: z.number().int().min(0).max(3650),
+  autoCloseDays: z.number().int().min(0).max(3650),
+});
+
 export const slaPolicyInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   priorityId: z.string().uuid().nullable().optional(),

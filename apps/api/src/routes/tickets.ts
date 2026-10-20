@@ -5,6 +5,7 @@ import {
   commentSchema,
   createTicketSchema,
   routePreviewSchema,
+  ticketUpdateSchema,
   transitionSchema,
 } from "@opspilot/core";
 import { requireAuth, requireRole, requireTenant } from "../auth.js";
@@ -16,8 +17,10 @@ import {
   applyTransition,
   assignTicket,
   createTicket,
+  deleteTicket,
   listTickets,
   ticketDetail,
+  updateTicket,
 } from "../domain/tickets.js";
 
 const ticketParams = z.object({ tenantSlug: z.string().min(1), ticketId: z.string().uuid() });
@@ -84,6 +87,43 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
       ticketDetail(client, tenantId, params.ticketId, userId, role),
     );
   });
+
+  app.patch("/t/:tenantSlug/tickets/:ticketId", async (req) => {
+    const { userId, tenantId, role } = context(req);
+    const params = ticketParams.parse(req.params);
+    const input = ticketUpdateSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) =>
+      updateTicket(
+        client,
+        tenantId,
+        userId,
+        role,
+        params.ticketId,
+        {
+          subject: input.subject,
+          description: input.description,
+          categoryId: input.categoryId,
+          priorityId: input.priorityId,
+          customFields: input.customFields,
+          expectedVersion: input.expectedVersion,
+        },
+        req.correlationId,
+      ),
+    );
+  });
+
+  app.delete(
+    "/t/:tenantSlug/tickets/:ticketId",
+    { preHandler: requireRole("tenant_admin") },
+    async (req, reply) => {
+      const { userId, tenantId } = context(req);
+      const params = ticketParams.parse(req.params);
+      await withTenant(tenantId, userId, async (client) =>
+        deleteTicket(client, tenantId, userId, params.ticketId, req.correlationId),
+      );
+      return reply.status(204).send();
+    },
+  );
 
   app.post("/t/:tenantSlug/tickets/:ticketId/transitions", async (req) => {
     const { userId, tenantId, role } = context(req);

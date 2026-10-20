@@ -1,9 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
-import { api, errorMessage, humanize, post, put } from "../api.js";
+import { api, del, errorMessage, humanize, patch, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
-import type { Config, NotificationTemplate } from "../types.js";
+import type {
+  Category,
+  Config,
+  CustomField,
+  NotificationTemplate,
+  Priority,
+  RoutingRule,
+  SlaPolicy,
+  Team,
+} from "../types.js";
 
 function slugify(value: string): string {
   return value
@@ -59,6 +68,18 @@ export function AdminPage() {
   const [ruleCategory, setRuleCategory] = useState("");
   const [ruleTeam, setRuleTeam] = useState("");
 
+  const [editingTeamId, setEditingTeamId] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState("");
+  const [editingPriorityId, setEditingPriorityId] = useState("");
+  const [editingFieldId, setEditingFieldId] = useState("");
+  const [editingRuleId, setEditingRuleId] = useState("");
+  const [editingSlaId, setEditingSlaId] = useState("");
+
+  const [settingsTimezone, setSettingsTimezone] = useState("UTC");
+  const [settingsPrefix, setSettingsPrefix] = useState("OPS");
+  const [settingsReopenDays, setSettingsReopenDays] = useState("14");
+  const [settingsAutoCloseDays, setSettingsAutoCloseDays] = useState("7");
+
   useEffect(() => {
     let cancelled = false;
     api<Config>(`/t/${tenantSlug}/config`)
@@ -69,6 +90,10 @@ export function AdminPage() {
         setRuleCategory(next.categories[0]?.id ?? "");
         setRuleTeam(next.teams[0]?.id ?? "");
         setSlaPriority(next.priorities[0]?.id ?? "");
+        setSettingsTimezone(next.settings?.timezone ?? "UTC");
+        setSettingsPrefix(next.settings?.ticket_prefix ?? "OPS");
+        setSettingsReopenDays(String(next.settings?.reopen_window_days ?? 14));
+        setSettingsAutoCloseDays(String(next.settings?.auto_close_days ?? 7));
       })
       .catch((caught) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -121,61 +146,77 @@ export function AdminPage() {
 
   function submitTeam(event: FormEvent): void {
     event.preventDefault();
+    const body = { name: teamName, slug: teamSlug || slugify(teamName) };
     void run(
-      () => post(`/t/${tenantSlug}/teams`, { name: teamName, slug: teamSlug || slugify(teamName) }),
-      "Team created.",
+      () => (editingTeamId ? patch(`/t/${tenantSlug}/teams/${editingTeamId}`, body) : post(`/t/${tenantSlug}/teams`, body)),
+      editingTeamId ? "Team updated." : "Team created.",
     ).then(() => {
       setTeamName("");
       setTeamSlug("");
+      setEditingTeamId("");
     });
   }
 
   function submitCategory(event: FormEvent): void {
     event.preventDefault();
+    const body = {
+      name: categoryName,
+      slug: categorySlug || slugify(categoryName),
+      defaultTeamId: categoryTeam || null,
+    };
     void run(
       () =>
-        post(`/t/${tenantSlug}/categories`, {
-          name: categoryName,
-          slug: categorySlug || slugify(categoryName),
-          defaultTeamId: categoryTeam || null,
-        }),
-      "Category created.",
+        editingCategoryId
+          ? patch(`/t/${tenantSlug}/categories/${editingCategoryId}`, body)
+          : post(`/t/${tenantSlug}/categories`, body),
+      editingCategoryId ? "Category updated." : "Category created.",
     ).then(() => {
       setCategoryName("");
       setCategorySlug("");
+      setEditingCategoryId("");
     });
   }
 
   function submitPriority(event: FormEvent): void {
     event.preventDefault();
+    const body = {
+      key: priorityKey || slugify(priorityLabel),
+      label: priorityLabel,
+      rank: Number(priorityRank),
+      color: priorityColor,
+    };
     void run(
       () =>
-        post(`/t/${tenantSlug}/priorities`, {
-          key: priorityKey || slugify(priorityLabel),
-          label: priorityLabel,
-          rank: Number(priorityRank),
-          color: priorityColor,
-        }),
-      "Priority created.",
+        editingPriorityId
+          ? patch(`/t/${tenantSlug}/priorities/${editingPriorityId}`, body)
+          : post(`/t/${tenantSlug}/priorities`, body),
+      editingPriorityId ? "Priority updated." : "Priority created.",
     ).then(() => {
       setPriorityLabel("");
       setPriorityKey("");
+      setEditingPriorityId("");
     });
   }
 
   function submitSla(event: FormEvent): void {
     event.preventDefault();
+    const body = {
+      name: slaName,
+      priorityId: slaPriority || null,
+      categoryId: slaCategory || null,
+      responseMinutes: Number(slaResponse),
+      resolutionMinutes: Number(slaResolution),
+    };
     void run(
       () =>
-        post(`/t/${tenantSlug}/sla-policies`, {
-          name: slaName,
-          priorityId: slaPriority || null,
-          categoryId: slaCategory || null,
-          responseMinutes: Number(slaResponse),
-          resolutionMinutes: Number(slaResolution),
-        }),
-      "SLA policy created.",
-    ).then(() => setSlaName(""));
+        editingSlaId
+          ? patch(`/t/${tenantSlug}/sla-policies/${editingSlaId}`, body)
+          : post(`/t/${tenantSlug}/sla-policies`, body),
+      editingSlaId ? "SLA policy updated." : "SLA policy created.",
+    ).then(() => {
+      setSlaName("");
+      setEditingSlaId("");
+    });
   }
 
   function submitField(event: FormEvent): void {
@@ -184,24 +225,30 @@ export function AdminPage() {
       .split(",")
       .map((option) => option.trim())
       .filter(Boolean);
+    const body = {
+      label: fieldLabel,
+      type: fieldType,
+      required: fieldRequired,
+      visibility: fieldVisibility,
+      options,
+      appliesToCategoryId: fieldCategory || null,
+      sortOrder: 100,
+    };
     void run(
       () =>
-        post(`/t/${tenantSlug}/custom-fields`, {
-          key: fieldKeyValue || fieldKey(fieldLabel),
-          label: fieldLabel,
-          type: fieldType,
-          required: fieldRequired,
-          visibility: fieldVisibility,
-          options,
-          appliesToCategoryId: fieldCategory || null,
-          sortOrder: 100,
-        }),
-      "Custom field created.",
+        editingFieldId
+          ? patch(`/t/${tenantSlug}/custom-fields/${editingFieldId}`, body)
+          : post(`/t/${tenantSlug}/custom-fields`, {
+              ...body,
+              key: fieldKeyValue || fieldKey(fieldLabel),
+            }),
+      editingFieldId ? "Custom field updated." : "Custom field created.",
     ).then(() => {
       setFieldLabel("");
       setFieldKeyValue("");
       setFieldOptions("");
       setFieldRequired(false);
+      setEditingFieldId("");
     });
   }
 
@@ -209,16 +256,91 @@ export function AdminPage() {
     event.preventDefault();
     void run(
       () =>
-        post(`/t/${tenantSlug}/routing-rules`, {
-          name: ruleName,
-          teamId: ruleTeam,
-          sortOrder: 100,
-          conditions: {
-            all: [{ field: "category_id", op: "eq", value: ruleCategory }],
-          },
+        editingRuleId
+          ? patch(`/t/${tenantSlug}/routing-rules/${editingRuleId}`, {
+              name: ruleName,
+              teamId: ruleTeam,
+              sortOrder: 100,
+            })
+          : post(`/t/${tenantSlug}/routing-rules`, {
+              name: ruleName,
+              teamId: ruleTeam,
+              sortOrder: 100,
+              conditions: {
+                all: [{ field: "category_id", op: "eq", value: ruleCategory }],
+              },
+            }),
+      editingRuleId ? "Routing rule updated." : "Routing rule created.",
+    ).then(() => {
+      setRuleName("");
+      setEditingRuleId("");
+    });
+  }
+
+  function submitSettings(event: FormEvent): void {
+    event.preventDefault();
+    void run(
+      () =>
+        patch(`/t/${tenantSlug}/settings`, {
+          timezone: settingsTimezone,
+          ticketPrefix: settingsPrefix,
+          reopenWindowDays: Number(settingsReopenDays),
+          autoCloseDays: Number(settingsAutoCloseDays),
         }),
-      "Routing rule created.",
-    ).then(() => setRuleName(""));
+      "Workspace settings updated.",
+    );
+  }
+
+  function deactivate(path: string, label: string): void {
+    if (!window.confirm(`Deactivate ${label}?`)) return;
+    void run(() => del(path), `${label} deactivated.`);
+  }
+
+  function editTeam(team: Team): void {
+    setEditingTeamId(team.id);
+    setTeamName(team.name);
+    setTeamSlug(team.slug);
+  }
+
+  function editCategory(category: Category): void {
+    setEditingCategoryId(category.id);
+    setCategoryName(category.name);
+    setCategorySlug(category.slug);
+    setCategoryTeam(category.default_team_id ?? "");
+  }
+
+  function editPriority(priority: Priority): void {
+    setEditingPriorityId(priority.id);
+    setPriorityLabel(priority.label);
+    setPriorityKey(priority.key);
+    setPriorityRank(String(priority.rank));
+    setPriorityColor(priority.color);
+  }
+
+  function editField(field: CustomField): void {
+    setEditingFieldId(field.id);
+    setFieldLabel(field.label);
+    setFieldKeyValue(field.key);
+    setFieldType(field.type);
+    setFieldVisibility(field.visibility);
+    setFieldRequired(field.required);
+    setFieldOptions(field.options.join(", "));
+    setFieldCategory(field.applies_to_category_id ?? "");
+  }
+
+  function editRule(rule: RoutingRule): void {
+    setEditingRuleId(rule.id);
+    setRuleName(rule.name);
+    setRuleTeam(rule.team_id);
+  }
+
+  function editSla(policy: SlaPolicy): void {
+    setEditingSlaId(policy.id);
+    setSlaName(policy.name);
+    setSlaPriority(policy.priority_id ?? "");
+    setSlaCategory(policy.category_id ?? "");
+    setSlaResponse(String(policy.response_minutes));
+    setSlaResolution(String(policy.resolution_minutes));
   }
 
   const teamNameById = new Map(config.teams.map((team) => [team.id, team.name]));
@@ -236,9 +358,51 @@ export function AdminPage() {
       <ErrorAlert message={error} />
       {notice && <div className="alert success">{notice}</div>}
 
+      <section className="card">
+        <h2>Workspace settings</h2>
+        <form className="inline-form" onSubmit={submitSettings}>
+          <label>
+            Timezone
+            <input value={settingsTimezone} onChange={(event) => setSettingsTimezone(event.target.value)} required />
+          </label>
+          <label>
+            Ticket prefix
+            <input
+              value={settingsPrefix}
+              onChange={(event) => setSettingsPrefix(event.target.value.toUpperCase())}
+              maxLength={10}
+              required
+            />
+          </label>
+          <label>
+            Reopen window (days)
+            <input
+              type="number"
+              min={0}
+              value={settingsReopenDays}
+              onChange={(event) => setSettingsReopenDays(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Auto-close after (days)
+            <input
+              type="number"
+              min={0}
+              value={settingsAutoCloseDays}
+              onChange={(event) => setSettingsAutoCloseDays(event.target.value)}
+              required
+            />
+          </label>
+          <button className="button secondary" disabled={busy}>
+            Save settings
+          </button>
+        </form>
+      </section>
+
       <div className="admin-grid">
         <section className="card">
-          <h2>Add a team</h2>
+          <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
           <form className="stack" onSubmit={submitTeam}>
             <label>
               Name
@@ -255,14 +419,21 @@ export function AdminPage() {
               Slug
               <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
             </label>
-            <button className="button secondary" disabled={busy}>
-              Create team
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingTeamId ? "Update team" : "Create team"}
+              </button>
+              {editingTeamId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
         <section className="card">
-          <h2>Add a category</h2>
+          <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
           <form className="stack" onSubmit={submitCategory}>
             <label>
               Name
@@ -289,14 +460,21 @@ export function AdminPage() {
                 ))}
               </select>
             </label>
-            <button className="button secondary" disabled={busy}>
-              Create category
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingCategoryId ? "Update category" : "Create category"}
+              </button>
+              {editingCategoryId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
         <section className="card">
-          <h2>Add a priority</h2>
+          <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
           <form className="stack" onSubmit={submitPriority}>
             <label>
               Label
@@ -335,14 +513,21 @@ export function AdminPage() {
                 </select>
               </label>
             </div>
-            <button className="button secondary" disabled={busy}>
-              Create priority
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingPriorityId ? "Update priority" : "Create priority"}
+              </button>
+              {editingPriorityId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingPriorityId(""); setPriorityLabel(""); setPriorityKey(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
         <section className="card">
-          <h2>Add an SLA policy</h2>
+          <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
           <form className="stack" onSubmit={submitSla}>
             <label>
               Name
@@ -394,14 +579,21 @@ export function AdminPage() {
                 />
               </label>
             </div>
-            <button className="button secondary" disabled={busy}>
-              Create SLA policy
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
+              </button>
+              {editingSlaId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
         <section className="card">
-          <h2>Add a custom field</h2>
+          <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
           <form className="stack" onSubmit={submitField}>
             <label>
               Label
@@ -458,14 +650,21 @@ export function AdminPage() {
               <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
               Required
             </label>
-            <button className="button secondary" disabled={busy}>
-              Create field
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingFieldId ? "Update field" : "Create field"}
+              </button>
+              {editingFieldId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingFieldId(""); setFieldLabel(""); setFieldKeyValue(""); setFieldOptions(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
         <section className="card span-2">
-          <h2>Add a routing rule</h2>
+          <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
           <p className="muted">
             Rules run before the category default. This builder creates a single category condition; the API accepts
             combined priority and custom-field conditions too.
@@ -495,9 +694,16 @@ export function AdminPage() {
                 ))}
               </select>
             </label>
-            <button className="button secondary" disabled={busy}>
-              Create rule
-            </button>
+            <div className="inline-fields">
+              <button className="button secondary" disabled={busy}>
+                {editingRuleId ? "Update rule" : "Create rule"}
+              </button>
+              {editingRuleId && (
+                <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </section>
       </div>
@@ -511,8 +717,14 @@ export function AdminPage() {
             <ul className="config-list">
               {config.teams.map((team) => (
                 <li key={team.id}>
-                  <strong>{team.name}</strong>
-                  <span className="muted small">{team.slug}</span>
+                  <div>
+                    <strong>{team.name}</strong>
+                    <span className="muted small">{team.slug}</span>
+                  </div>
+                  <ConfigActions
+                    onEdit={() => editTeam(team)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
+                  />
                 </li>
               ))}
             </ul>
@@ -524,10 +736,16 @@ export function AdminPage() {
           <ul className="config-list">
             {config.categories.map((category) => (
               <li key={category.id}>
-                <strong>{category.name}</strong>
-                <span className="muted small">
-                  {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
-                </span>
+                <div>
+                  <strong>{category.name}</strong>
+                  <span className="muted small">
+                    {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
+                  </span>
+                </div>
+                <ConfigActions
+                  onEdit={() => editCategory(category)}
+                  onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
+                />
               </li>
             ))}
           </ul>
@@ -538,8 +756,14 @@ export function AdminPage() {
           <ul className="config-list">
             {config.priorities.map((priority) => (
               <li key={priority.id}>
-                <strong>{priority.label}</strong>
-                <span className="muted small">rank {priority.rank}</span>
+                <div>
+                  <strong>{priority.label}</strong>
+                  <span className="muted small">rank {priority.rank}</span>
+                </div>
+                <ConfigActions
+                  onEdit={() => editPriority(priority)}
+                  onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
+                />
               </li>
             ))}
           </ul>
@@ -553,12 +777,18 @@ export function AdminPage() {
             <ul className="config-list">
               {config.sla_policies.map((policy) => (
                 <li key={policy.id}>
-                  <strong>{policy.name}</strong>
-                  <span className="muted small">
-                    {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
-                    {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
-                    {policy.response_minutes}m / {policy.resolution_minutes}m
-                  </span>
+                  <div>
+                    <strong>{policy.name}</strong>
+                    <span className="muted small">
+                      {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
+                      {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
+                      {policy.response_minutes}m / {policy.resolution_minutes}m
+                    </span>
+                  </div>
+                  <ConfigActions
+                    onEdit={() => editSla(policy)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
+                  />
                 </li>
               ))}
             </ul>
@@ -570,11 +800,17 @@ export function AdminPage() {
           <ul className="config-list">
             {config.custom_fields.map((field) => (
               <li key={field.id}>
-                <strong>{field.label}</strong>
-                <span className="muted small">
-                  {field.type} · {field.visibility}
-                  {field.required ? " · required" : ""}
-                </span>
+                <div>
+                  <strong>{field.label}</strong>
+                  <span className="muted small">
+                    {field.type} · {field.visibility}
+                    {field.required ? " · required" : ""}
+                  </span>
+                </div>
+                <ConfigActions
+                  onEdit={() => editField(field)}
+                  onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
+                />
               </li>
             ))}
           </ul>
@@ -588,8 +824,14 @@ export function AdminPage() {
             <ul className="config-list">
               {config.routing_rules.map((rule) => (
                 <li key={rule.id}>
-                  <strong>{rule.name}</strong>
-                  <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
+                  <div>
+                    <strong>{rule.name}</strong>
+                    <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
+                  </div>
+                  <ConfigActions
+                    onEdit={() => editRule(rule)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                  />
                 </li>
               ))}
             </ul>
@@ -614,6 +856,19 @@ export function AdminPage() {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ConfigActions({ onEdit, onRemove }: { onEdit: () => void; onRemove: () => void }) {
+  return (
+    <div className="config-actions">
+      <button type="button" className="button ghost small" onClick={onEdit}>
+        Edit
+      </button>
+      <button type="button" className="button ghost small" onClick={onRemove}>
+        Deactivate
+      </button>
     </div>
   );
 }

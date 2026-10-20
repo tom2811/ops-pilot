@@ -87,7 +87,7 @@ export async function loadTicket(
   forUpdate = false,
 ): Promise<TicketRow | null> {
   const result = await client.query<TicketRow>(
-    `${ticketSelect} where t.tenant_id = $1 and t.id = $2 ${forUpdate ? "for update of t" : ""}`,
+    `${ticketSelect} where t.tenant_id = $1 and t.id = $2 and t.deleted_at is null ${forUpdate ? "for update of t" : ""}`,
     [tenantId, ticketId],
   );
   return result.rows[0] ?? null;
@@ -139,7 +139,7 @@ export async function listTickets(
   role: Role,
   input: TicketListInput,
 ): Promise<{ items: TicketRow[]; total: number }> {
-  const conditions = ["t.tenant_id = $1"];
+  const conditions = ["t.tenant_id = $1", "t.deleted_at is null"];
   const params: Array<string | number> = [tenantId];
   let index = 2;
 
@@ -301,6 +301,194 @@ export async function createTicket(
   const created = await loadTicket(client, tenantId, id);
   if (!created) throw new Error("Created ticket missing");
   return created;
+}
+
+export async function updateTicket(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  role: Role,
+  ticketId: string,
+  input: {
+    subject?: string;
+    description?: string;
+    categoryId?: string;
+    priorityId?: string;
+    customFields?: Record<string, unknown>;
+    expectedVersion: number;
+  },
+  correlationId: string,
+): Promise<TicketRow> {
+  const ticket = await loadTicket(client, tenantId, ticketId, true);
+  if (!ticket) notFound();
+  if (role === "employee") {
+    if (ticket.requester_id !== userId) notFound();
+    if (ticket.status_stage === "resolved" || ticket.status_stage === "closed") {
+      badRequest("Resolved or closed tickets cannot be edited");
+    }
+    if (
+      (input.categoryId && input.categoryId !== ticket.category_id) ||
+      (input.priorityId && input.priorityId !== ticket.priority_id)
+    ) {
+      badRequest("Only agents can change the category or priority");
+    }
+  } else if (role === "agent") {
+    await assertCanRead(client, ticket, userId, role);
+  }
+  if (ticket.version !== input.expectedVersion) conflict("Ticket changed; reload and try again");
+
+  const categoryId = input.categoryId ?? ticket.category_id;
+  const priorityId = input.priorityId ?? ticket.priority_id;
+  if (input.categoryId) {
+    const category = await client.query(
+      "select 1 from categories where tenant_id = $1 and id = $2 and is_active",
+      [tenantId, categoryId],
+    );
+    if ((category.rowCount ?? 0) === 0) badRequest("Unknown category");
+  }
+  if (input.priorityId) {
+    const priority = await client.query(
+      "select 1 from priorities where tenant_id = $1 and id = $2 and is_active",
+      [tenantId, priorityId],
+    );
+    if ((priority.rowCount ?? 0) === 0) badRequest("Unknown priority");
+  }
+
+  let customFields = ticket.custom_fields;
+  if (input.customFields) {
+    customFields = await validateCustomFields(client, tenantId, categoryId, input.customFields, role);
+    if (role === "employee") {
+      const hidden = await client.query<{ key: string }>(
+        "select key from custom_field_definitions where tenant_id = $1 and visibility = 'internal'",
+        [tenantId],
+      );
+      for (const field of hidden.rows) {
+        if (field.key in ticket.custom_fields) customFields[field.key] = ticket.custom_fields[field.key];
+      }
+    }
+  }
+
+  const slaChanged = categoryId !== ticket.category_id || priorityId !== ticket.priority_id;
+  let slaPolicyId: string | null = null;
+  let responseMinutes: number | null = null;
+  let resolutionMinutes: number | null = null;
+  if (slaChanged) {
+    const sla = await client.query<{ id: string; response_minutes: number; resolution_minutes: number }>(
+      `select id, response_minutes, resolution_minutes
+       from sla_policies
+       where tenant_id = $1 and is_active
+         and (priority_id is null or priority_id = $2)
+         and (category_id is null or category_id = $3)
+       order by (category_id is not null) desc, (priority_id is not null) desc, created_at
+       limit 1`,
+      [tenantId, priorityId, categoryId],
+    );
+    const policy = sla.rows[0];
+    slaPolicyId = policy?.id ?? null;
+    responseMinutes = policy?.response_minutes ?? null;
+    resolutionMinutes = policy?.resolution_minutes ?? null;
+  }
+
+  const updated = await client.query(
+    `update tickets set
+       subject = $3,
+       description = $4,
+       category_id = $5,
+       priority_id = $6,
+       custom_fields = $7,
+       sla_policy_id = case when $8 then $9 else sla_policy_id end,
+       sla_response_due_at = case when $8 then created_at + ($10::text || ' minutes')::interval
+                                  else sla_response_due_at end,
+       sla_resolution_due_at = case when $8 then created_at + ($11::text || ' minutes')::interval
+                                    else sla_resolution_due_at end,
+       sla_response_breached_at = case when $8 then null else sla_response_breached_at end,
+       sla_resolution_breached_at = case when $8 then null else sla_resolution_breached_at end,
+       version = version + 1,
+       updated_at = now()
+     where tenant_id = $1 and id = $2 and version = $12`,
+    [
+      tenantId,
+      ticketId,
+      input.subject ?? ticket.subject,
+      input.description ?? ticket.description,
+      categoryId,
+      priorityId,
+      JSON.stringify(customFields),
+      slaChanged,
+      slaPolicyId,
+      responseMinutes,
+      resolutionMinutes,
+      input.expectedVersion,
+    ],
+  );
+  if ((updated.rowCount ?? 0) === 0) conflict("Ticket changed; reload and try again");
+
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.updated",
+    "ticket",
+    ticketId,
+    {
+      subject: ticket.subject,
+      categoryId: ticket.category_id,
+      priorityId: ticket.priority_id,
+    },
+    {
+      subject: input.subject ?? ticket.subject,
+      categoryId,
+      priorityId,
+    },
+    correlationId,
+  );
+
+  const refreshed = await loadTicket(client, tenantId, ticketId);
+  if (!refreshed) throw new Error("Ticket disappeared after update");
+
+  await enqueueEvent(client, tenantId, "ticket", ticketId, refreshed.version, "ticket.updated", {
+    ticketId,
+    changed: Object.keys(input).filter((key) => key !== "expectedVersion"),
+  });
+
+  if (role === "employee") {
+    return {
+      ...refreshed,
+      custom_fields: await visibleCustomFields(client, tenantId, refreshed.category_id, refreshed.custom_fields, role),
+    };
+  }
+  return refreshed;
+}
+
+export async function deleteTicket(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  ticketId: string,
+  correlationId: string,
+): Promise<void> {
+  const ticket = await loadTicket(client, tenantId, ticketId, true);
+  if (!ticket) notFound();
+  await client.query(
+    `update tickets set deleted_at = now(), version = version + 1, updated_at = now()
+     where tenant_id = $1 and id = $2`,
+    [tenantId, ticketId],
+  );
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role: "tenant_admin" },
+    "ticket.deleted",
+    "ticket",
+    ticketId,
+    { number: ticket.number, subject: ticket.subject },
+    null,
+    correlationId,
+  );
+  await enqueueEvent(client, tenantId, "ticket", ticketId, ticket.version + 1, "ticket.deleted", {
+    ticketId,
+    number: ticket.number,
+  });
 }
 
 type StatusRef = { id: string; key: string; label: string; stage: Stage };

@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
-import { api, errorMessage, formatDate, humanize, post } from "../api.js";
+import { api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PriorityBadge, SlaBadge, Spinner, StatusBadge } from "../components.js";
-import type { Config, TicketDetail } from "../types.js";
+import type { Config, CustomField, TicketDetail } from "../types.js";
+import { CustomFieldInput } from "./TicketsPage.js";
 
 function slaState(
   due: string | null,
@@ -29,7 +30,8 @@ type TimelineEvent = {
 
 export function TicketDetailPage() {
   const { tenantSlug = "", ticketId = "" } = useParams();
-  const { memberships } = useAuth();
+  const { user, memberships } = useAuth();
+  const navigate = useNavigate();
   const role = memberships.find((item) => item.slug === tenantSlug)?.role ?? "employee";
   const canAgent = role === "agent" || role === "tenant_admin";
 
@@ -50,6 +52,14 @@ export function TicketDetailPage() {
 
   const [teamId, setTeamId] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
+
+  const [editing, setEditing] = useState(false);
+  const [editSubject, setEditSubject] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editPriorityId, setEditPriorityId] = useState("");
+  const [editCustomFields, setEditCustomFields] = useState<Record<string, unknown>>({});
+  const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +201,64 @@ export function TicketDetailPage() {
     }
   }
 
+  function startEditing(): void {
+    if (!detail) return;
+    setEditSubject(detail.subject);
+    setEditDescription(detail.description);
+    setEditCategoryId(detail.category_id);
+    setEditPriorityId(detail.priority_id);
+    setEditCustomFields(detail.custom_fields);
+    setEditing(true);
+  }
+
+  async function submitEdit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!detail) return;
+    setEditBusy(true);
+    setError(null);
+    try {
+      await patch(`/t/${tenantSlug}/tickets/${ticketId}`, {
+        subject: editSubject,
+        description: editDescription,
+        categoryId: editCategoryId,
+        priorityId: editPriorityId,
+        customFields: editCustomFields,
+        expectedVersion: detail.version,
+      });
+      setEditing(false);
+      await reload("Ticket updated.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function removeTicket(): Promise<void> {
+    if (!detail || !window.confirm(`Delete ticket ${formatTicketNumber(prefix, detail.number)}?`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await del(`/t/${tenantSlug}/tickets/${ticketId}`);
+      navigate(`/t/${tenantSlug}/tickets`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setBusy(false);
+    }
+  }
+
+  const canEdit =
+    role === "tenant_admin" ||
+    role === "agent" ||
+    (role === "employee" &&
+      user?.id === detail.requester_id &&
+      detail.status_stage !== "resolved" &&
+      detail.status_stage !== "closed");
+  const editFields =
+    config?.custom_fields.filter(
+      (field) => field.applies_to_category_id === null || field.applies_to_category_id === editCategoryId,
+    ) ?? [];
+
   return (
     <div className="stack-lg">
       <div className="detail-top">
@@ -200,6 +268,18 @@ export function TicketDetailPage() {
         <div className="detail-title">
           <span className="mono muted">{formatTicketNumber(prefix, detail.number)}</span>
           <h1>{detail.subject}</h1>
+          {canEdit && (
+            <div className="page-actions detail-actions">
+              <button className="button secondary" onClick={startEditing}>
+                Edit ticket
+              </button>
+              {role === "tenant_admin" && (
+                <button className="button ghost" onClick={() => void removeTicket()} disabled={busy}>
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
           <div className="badge-row">
             <StatusBadge label={detail.status_label} stage={detail.status_stage} />
             <PriorityBadge label={priorityMeta?.label ?? detail.priority_label} color={priorityMeta?.color} />
@@ -216,6 +296,78 @@ export function TicketDetailPage() {
 
       <div className="detail-grid">
         <div className="stack">
+          {editing && (
+            <section className="card">
+              <div className="section-heading">
+                <h2>Edit ticket</h2>
+                <button className="button ghost small" onClick={() => setEditing(false)}>
+                  Cancel
+                </button>
+              </div>
+              <form className="stack" onSubmit={(event) => void submitEdit(event)}>
+                <label>
+                  Subject
+                  <input value={editSubject} onChange={(event) => setEditSubject(event.target.value)} maxLength={200} required />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    value={editDescription}
+                    onChange={(event) => setEditDescription(event.target.value)}
+                    rows={7}
+                    maxLength={20000}
+                    required
+                  />
+                </label>
+                <div className="inline-fields">
+                  <label>
+                    Category
+                    <select
+                      value={editCategoryId}
+                      onChange={(event) => setEditCategoryId(event.target.value)}
+                      disabled={role === "employee"}
+                    >
+                      {config?.categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Priority
+                    <select
+                      value={editPriorityId}
+                      onChange={(event) => setEditPriorityId(event.target.value)}
+                      disabled={role === "employee"}
+                    >
+                      {config?.priorities.map((priority) => (
+                        <option key={priority.id} value={priority.id}>
+                          {priority.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {editFields.map((field: CustomField) => (
+                  <CustomFieldInput
+                    key={field.id}
+                    field={field}
+                    value={editCustomFields[field.key]}
+                    onChange={(value) =>
+                      setEditCustomFields((current) => ({ ...current, [field.key]: value }))
+                    }
+                  />
+                ))}
+                <div className="form-footer">
+                  <button className="button" disabled={editBusy}>
+                    {editBusy ? "Saving…" : "Save changes"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          )}
+
           <section className="card">
             <div className="section-heading">
               <h2>Request</h2>

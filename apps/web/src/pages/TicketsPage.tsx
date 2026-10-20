@@ -8,7 +8,7 @@ import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
 
-function CustomFieldInput({
+export function CustomFieldInput({
   field,
   value,
   onChange,
