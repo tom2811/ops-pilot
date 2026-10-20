@@ -1,0 +1,107 @@
+name: opspilot
+
+x-app-env: &app-env
+  ADMIN_DATABASE_URL: postgres://postgres:opspilot@postgres:5432/opspilot
+  APP_DATABASE_URL: postgres://opspilot_app:opspilot_app@postgres:5432/opspilot
+  WORKER_DATABASE_URL: postgres://postgres:opspilot@postgres:5432/opspilot
+  APP_DB_ROLE: opspilot_app
+  APP_DB_PASSWORD: opspilot_app
+  PORT: "3000"
+  WEB_ORIGIN: http://localhost:8080
+  SESSION_COOKIE_SECURE: "false"
+  PUBLIC_API_URL: http://api:3000/api
+  N8N_WEBHOOK_URL: http://n8n:5678/webhook/opspilot/ticket-created
+  N8N_WEBHOOK_SECRET: dev-webhook-secret
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: opspilot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: opspilot
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d opspilot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["sh", "-c", "corepack pnpm db:role && corepack pnpm db:migrate && corepack pnpm db:seed"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["corepack", "pnpm", "--filter", "@opspilot/api", "start"]
+    environment: *app-env
+    ports:
+      - "3000:3000"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["corepack", "pnpm", "--filter", "@opspilot/api", "worker"]
+    environment: *app-env
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENCRYPTION_KEY: opspilot-demo-encryption-key-change-me
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      GENERIC_TIMEZONE: Europe/London
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./deploy/n8n/workflow.json:/workflow.json:ro
+    command:
+      - sh
+      - -c
+      - >-
+        n8n import:workflow --input=/workflow.json &&
+        (n8n update:workflow --id=opspilot-ticket-routing --active=true || true) &&
+        n8n start
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  n8n_data:
