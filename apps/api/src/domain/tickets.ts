@@ -387,6 +387,17 @@ export async function applyTransition(
   if ((transition.requires_reason || targetStatus.stage === "pending" || reopening) && !input.reason) {
     badRequest("Reason is required");
   }
+  if (reopening) {
+    const settings = await client.query<{ reopen_window_days: number }>(
+      "select reopen_window_days from tenant_settings where tenant_id = $1",
+      [tenantId],
+    );
+    const windowDays = settings.rows[0]?.reopen_window_days ?? 0;
+    const closedAt = ticket.resolved_at ?? ticket.closed_at;
+    if (!closedAt || Date.now() > closedAt.getTime() + windowDays * 86_400_000) {
+      badRequest("Reopen window has expired");
+    }
+  }
 
   const updated = await client.query(
     `update tickets set

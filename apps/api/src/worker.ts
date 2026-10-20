@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 import pg from "pg";
 import { z } from "zod";
 import { createMailer } from "./mailer.js";
+import { writeAudit } from "./audit.js";
+import { enqueueEvent } from "./outbox.js";
 
 config({ path: resolve(import.meta.dirname, "../../../.env") });
 config();
@@ -18,6 +20,7 @@ const workerEnv = z
     N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
     PUBLIC_API_URL: z.string().url().default("http://localhost:3000/api"),
     WORKER_POLL_MS: z.coerce.number().int().positive().default(1500),
+    MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
     SMTP_HOST: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
     SMTP_PORT: z.preprocess(
       (value) => (value === "" ? undefined : value),
@@ -85,6 +88,90 @@ function hashToken(token: string): string {
 
 function log(event: string, details: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level: "info", event, ...details, at: new Date().toISOString() }));
+}
+
+type AutoCloseTenant = {
+  tenant_id: string;
+  auto_close_days: number;
+  closed_status_id: string;
+};
+
+async function autoCloseTickets(): Promise<number> {
+  const tenants = await pool.query<AutoCloseTenant>(
+    `select ts.tenant_id, ts.auto_close_days, closed.id as closed_status_id
+     from tenant_settings ts
+     join lateral (
+       select id from ticket_statuses
+       where tenant_id = ts.tenant_id and stage = 'closed' and is_active
+       order by sort_order limit 1
+     ) closed on true
+     where ts.auto_close_days > 0`,
+  );
+
+  let closedCount = 0;
+  for (const tenant of tenants.rows) {
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const due = await client.query<{ id: string; status_id: string; version: number }>(
+        `select t.id, t.status_id, t.version
+         from tickets t
+         join ticket_statuses s on s.tenant_id = t.tenant_id and s.id = t.status_id
+         where t.tenant_id = $1 and s.stage = 'resolved'
+           and t.resolved_at < now() - ($2::text || ' days')::interval
+         order by t.resolved_at
+         for update of t skip locked
+         limit 100`,
+        [tenant.tenant_id, tenant.auto_close_days],
+      );
+
+      for (const ticket of due.rows) {
+        const updated = await client.query<{ version: number }>(
+          `update tickets
+           set status_id = $3, closed_at = now(), version = version + 1, updated_at = now()
+           where tenant_id = $1 and id = $2 and version = $4
+           returning version`,
+          [tenant.tenant_id, ticket.id, tenant.closed_status_id, ticket.version],
+        );
+        const next = updated.rows[0];
+        if (!next) continue;
+
+        await client.query(
+          `insert into ticket_status_history
+            (tenant_id, ticket_id, from_status_id, to_status_id, actor_role, reason)
+           values ($1, $2, $3, $4, 'system', 'auto-closed after resolution window')`,
+          [tenant.tenant_id, ticket.id, ticket.status_id, tenant.closed_status_id],
+        );
+        await writeAudit(
+          client,
+          tenant.tenant_id,
+          { id: null, role: "system" },
+          "ticket.auto_closed",
+          "ticket",
+          ticket.id,
+          { autoCloseDays: tenant.auto_close_days },
+          { stage: "closed" },
+          randomUUID(),
+        );
+        await enqueueEvent(client, tenant.tenant_id, "ticket", ticket.id, next.version, "ticket.auto_closed", {
+          ticketId: ticket.id,
+        });
+        closedCount += 1;
+      }
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      log("auto_close_failed", { tenantId: tenant.tenant_id, error: String(error) });
+    } finally {
+      client.release();
+    }
+  }
+  return closedCount;
+}
+
+async function runMaintenance(): Promise<void> {
+  const closed = await autoCloseTickets();
+  if (closed > 0) log("tickets_auto_closed", { count: closed });
 }
 
 async function claimEvent(): Promise<OutboxRow | null> {
@@ -289,10 +376,15 @@ async function fail(event: OutboxRow, error: unknown): Promise<void> {
 }
 
 let running = true;
+let nextMaintenance = 0;
 
 async function loop(): Promise<void> {
   while (running) {
     try {
+      if (Date.now() >= nextMaintenance) {
+        await runMaintenance();
+        nextMaintenance = Date.now() + workerEnv.MAINTENANCE_INTERVAL_MS;
+      }
       await processNotifications();
       const event = await claimEvent();
       if (!event) {
