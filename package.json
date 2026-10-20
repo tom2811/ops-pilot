@@ -1,0 +1,16 @@
+{
+  "name": "ops-pilot",
+  "private": true,
+  "packageManager": "pnpm@12.14.0",
+  "scripts": {
+    "build": "pnpm --filter @opspilot/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:api": "pnpm --filter @opspilot/api dev",
+    "dev:web": "pnpm --filter @opspilot/web dev",
+    "worker": "pnpm --filter @opspilot/api worker",
+    "db:role": "pnpm --filter @opspilot/db role",
+    "db:migrate": "pnpm --filter @opspilot/db migrate",
+    "db:seed": "pnpm --filter @opspilot/db seed"
+  }
+}
