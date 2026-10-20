@@ -159,7 +159,11 @@ async function main() {
     await client.query(`delete from tickets where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from audit_log where tenant_id in (${seedTenantIds})`);
     await client.query("delete from tenants where slug in ('acme', 'globex')");
-    await client.query("delete from users where email in (" + users.map((u) => `'${u.email}'`).join(",") + ")");
+    const seedEmails = users.map((u) => `'${u.email}'`).join(",");
+    await client.query(
+      `delete from user_invitations where invited_by in (select id from users where email in (${seedEmails}))`,
+    );
+    await client.query("delete from users where email in (" + seedEmails + ")");
 
     for (const tenant of tenants) {
       tenantIdBySlug.set(tenant.slug, tenant.id);

@@ -46,7 +46,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     setSessionCookie(reply, session.token, session.expiresAt);
     const memberships = await getMemberships(user.id);
     return {
-      user: { id: user.id, email: user.email, displayName: user.displayName },
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isPlatformAdmin: user.isPlatformAdmin,
+      },
       memberships,
     };
   });
@@ -323,7 +328,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
     setSessionCookie(reply, session.token, session.expiresAt);
     return {
-      user: { id: userId, email: userEmail, displayName },
+      user: { id: userId, email: userEmail, displayName, isPlatformAdmin: false },
       memberships: await getMemberships(userId),
     };
   });

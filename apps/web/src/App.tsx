@@ -5,6 +5,7 @@ import { AdminPage } from "./pages/AdminPage.js";
 import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordPages.js";
+import { PlatformPage } from "./pages/PlatformPage.js";
 import { TicketDetailPage } from "./pages/TicketDetailPage.js";
 import { TicketsPage } from "./pages/TicketsPage.js";
 import { UsersPage } from "./pages/UsersPage.js";
@@ -22,6 +23,7 @@ function HomeRedirect() {
   const { user, memberships, loading } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
+  if (memberships.length === 0 && user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   if (memberships.length === 0) return <NoMembership />;
   return <Navigate to={`/t/${memberships[0]?.slug}/tickets`} replace />;
 }
@@ -36,6 +38,11 @@ function NoMembership() {
         <p className="muted">
           Signed in as {user?.email}. This account has no active tenant membership.
         </p>
+        {user?.isPlatformAdmin && (
+          <button className="button secondary" onClick={() => window.location.assign("/platform")}>
+            Platform
+          </button>
+        )}
         <button className="button secondary" onClick={() => void logout()}>
           Sign out
         </button>
@@ -90,6 +97,7 @@ function TenantLayout() {
               </option>
             ))}
           </select>
+          {user.isPlatformAdmin && <NavLink className="account-link" to="/platform">Platform</NavLink>}
           <NavLink className="account-link" to="/account">Account</NavLink>
           <div className="user-chip" title={user.email}>
             <span>{user.displayName}</span>
@@ -135,6 +143,7 @@ export function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/invite/:token" element={<InvitationPage />} />
       <Route path="/account" element={<AccountPage />} />
+      <Route path="/platform" element={<PlatformPage />} />
       <Route path="/t/:tenantSlug" element={<TenantLayout />}>
         <Route index element={<Navigate to="tickets" replace />} />
         <Route path="tickets" element={<TicketsPage />} />

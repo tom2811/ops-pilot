@@ -4,6 +4,7 @@ export type User = {
   id: string;
   email: string;
   displayName: string;
+  isPlatformAdmin: boolean;
 };
 
 export type Membership = {
@@ -222,4 +223,15 @@ export type InvitationInfo = {
   tenantName: string;
   tenantSlug: string;
   existingUser: boolean;
+};
+
+export type PlatformTenant = {
+  id: string;
+  slug: string;
+  name: string;
+  status: "active" | "suspended";
+  created_at: string;
+  member_count: number;
+  ticket_count: number;
+  pending_invitations: number;
 };

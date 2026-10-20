@@ -1229,3 +1229,49 @@ dd {
 .session-list p {
   margin: 0.15rem 0 0;
 }
+
+/* Platform */
+.platform-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.platform-topbar > div {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.platform-topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.platform-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.platform-stats div {
+  display: grid;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.platform-stats strong {
+  font-size: 1.5rem;
+}
+
+.platform-stats span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}

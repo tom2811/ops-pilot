@@ -50,16 +50,27 @@ export async function getSessionUser(req: FastifyRequest): Promise<AuthUser | nu
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return null;
 
-  const result = await pool.query<{ id: string; email: string; display_name: string }>(
+  const result = await pool.query<{
+    id: string;
+    email: string;
+    display_name: string;
+    is_platform_admin: boolean;
+  }>(
     `update sessions s set last_seen_at = now()
      from users u
      where s.token_hash = $1 and s.expires_at > now() and u.id = s.user_id and u.is_active
-     returning u.id, u.email, u.display_name`,
+     returning u.id, u.email, u.display_name,
+       exists (select 1 from platform_admins pa where pa.user_id = u.id) as is_platform_admin`,
     [hashToken(token)],
   );
   const row = result.rows[0];
   if (!row) return null;
-  return { id: row.id, email: row.email, displayName: row.display_name };
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    isPlatformAdmin: row.is_platform_admin,
+  };
 }
 
 export async function getMemberships(userId: string): Promise<Array<TenantContext & { name: string }>> {
@@ -111,6 +122,11 @@ export async function requireTenant(req: FastifyRequest, _reply: FastifyReply): 
   req.tenant = tenant;
 }
 
+export async function requirePlatformAdmin(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  if (!req.authUser) throw new AppError(401, "Unauthorized");
+  if (!req.authUser.isPlatformAdmin) throw new AppError(403, "Platform administrators only");
+}
+
 export function requireRole(...roles: Role[]) {
   return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     const tenant = req.tenant;
@@ -124,14 +140,29 @@ export async function getLoginUser(email: string): Promise<{
   email: string;
   displayName: string;
   passwordHash: string;
+  isPlatformAdmin: boolean;
 } | null> {
-  const result = await pool.query<{ id: string; email: string; display_name: string; password_hash: string }>(
-    "select id, email, display_name, password_hash from users where email = $1 and is_active",
+  const result = await pool.query<{
+    id: string;
+    email: string;
+    display_name: string;
+    password_hash: string;
+    is_platform_admin: boolean;
+  }>(
+    `select u.id, u.email, u.display_name, u.password_hash,
+            exists (select 1 from platform_admins pa where pa.user_id = u.id) as is_platform_admin
+     from users u where u.email = $1 and u.is_active`,
     [email],
   );
   const row = result.rows[0];
   if (!row) return null;
-  return { id: row.id, email: row.email, displayName: row.display_name, passwordHash: row.password_hash };
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    passwordHash: row.password_hash,
+    isPlatformAdmin: row.is_platform_admin,
+  };
 }
 
 export async function deleteSession(req: FastifyRequest): Promise<void> {

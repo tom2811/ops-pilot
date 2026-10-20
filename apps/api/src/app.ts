@@ -8,6 +8,7 @@ import { env } from "./env.js";
 import { AppError } from "./errors.js";
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
+import { platformRoutes } from "./routes/platform.js";
 import { ticketRoutes } from "./routes/tickets.js";
 import { configRoutes } from "./routes/config.js";
 import { automationRoutes } from "./routes/automation.js";
@@ -64,6 +65,7 @@ export async function buildApp() {
   await app.register(notificationRoutes, { prefix: "/api" });
   await app.register(attachmentRoutes, { prefix: "/api" });
   await app.register(userRoutes, { prefix: "/api" });
+  await app.register(platformRoutes, { prefix: "/api" });
 
   app.get("/api/health", async () => ({ ok: true }));
 

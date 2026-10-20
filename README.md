@@ -4,7 +4,7 @@ Multi-tenant IT service desk with a TypeScript API, React UI, PostgreSQL row-lev
 
 ## Status
 
-The product core is implemented: tenant-aware ticket lifecycle, role-scoped queues, configuration, SLA tracking, attachments, queued email/SMTP delivery, audit history, transactional outbox, n8n routing, and workspace people management with invitations, password reset, and session controls.
+The product core is implemented: tenant-aware ticket lifecycle, role-scoped queues, configuration, SLA tracking, attachments, queued email/SMTP delivery, audit history, transactional outbox, n8n routing, workspace people management, and platform tenant onboarding.
 
 ## Stack
 
@@ -66,6 +66,7 @@ Demo accounts use password `Passw0rd!`:
 | globex | admin@globex.test | tenant_admin |
 | globex | agent@globex.test | agent |
 | globex | employee@globex.test | employee |
+| — | platform@opspilot.test | platform admin |
 
 ## Docker Compose demo
 
@@ -129,6 +130,8 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 | GET | `/api/t/:tenantSlug/users` | Members and pending invitations |
 | POST/DELETE | `/api/t/:tenantSlug/invitations[/:id]` | Invite or revoke |
 | PATCH | `/api/t/:tenantSlug/users/:userId` | Update role, teams, or active state |
+| GET/POST | `/api/platform/tenants` | List or onboard workspaces |
+| PATCH | `/api/platform/tenants/:id` | Suspend or reactivate a workspace |
 | GET | `/api/t/:tenantSlug/tickets` | Role-scoped list, filters, pagination |
 | POST | `/api/t/:tenantSlug/tickets` | Create ticket |
 | GET | `/api/t/:tenantSlug/tickets/:id` | Detail, visible comments, history, transitions |
@@ -158,7 +161,9 @@ Manual n8n setup: import `deploy/n8n/workflow.json`, activate it, and set `N8N_W
 
 Included: RLS tenancy, session auth and management, invitations, password reset, tenant roles, configuration, custom fields, routing, ticket lifecycle, comments, assignment, SLA policies and breach tracking, attachments, queued email/SMTP delivery, audit, outbox, idempotent automation, n8n workflow, responsive UI.
 
-Deferred: custom roles, feedback/CSAT, dashboards and reporting, platform admin UI, arbitrary workflow graphs.
+Platform operators can onboard a workspace with a complete default configuration and email an administrator invitation; suspending a workspace immediately blocks tenant access.
+
+Deferred: custom roles, feedback/CSAT, dashboards and reporting, arbitrary workflow graphs.
 
 ## Branching
 
