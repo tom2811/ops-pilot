@@ -31,6 +31,18 @@ export const DEFAULT_PRIORITIES: Array<{ key: string; label: string; rank: numbe
   { key: "p4", label: "P4 - Low", rank: 4, color: "gray" },
 ];
 
+export const DEFAULT_SLA_POLICIES: Array<{
+  priorityKey: string;
+  name: string;
+  responseMinutes: number;
+  resolutionMinutes: number;
+}> = [
+  { priorityKey: "p1", name: "Critical support", responseMinutes: 60, resolutionMinutes: 240 },
+  { priorityKey: "p2", name: "High priority support", responseMinutes: 240, resolutionMinutes: 480 },
+  { priorityKey: "p3", name: "Standard support", responseMinutes: 480, resolutionMinutes: 1440 },
+  { priorityKey: "p4", name: "Low priority support", responseMinutes: 1440, resolutionMinutes: 2880 },
+];
+
 export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: string; body: string }> = [
   {
     key: "ticket_created",
@@ -145,6 +157,14 @@ export const notificationInputSchema = z
   .refine((input) => Boolean(input.templateKey || (input.subject && input.body)), {
     message: "Provide a templateKey or both subject and body",
   });
+
+export const slaPolicyInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  priorityId: z.string().uuid().nullable().optional(),
+  categoryId: z.string().uuid().nullable().optional(),
+  responseMinutes: z.number().int().min(1).max(525_600),
+  resolutionMinutes: z.number().int().min(1).max(525_600),
+});
 
 export const notificationTemplateInputSchema = z.object({
   subject: z.string().trim().min(1).max(300),

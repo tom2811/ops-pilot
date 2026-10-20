@@ -169,7 +169,65 @@ async function autoCloseTickets(): Promise<number> {
   return closedCount;
 }
 
+type SlaBreachRow = {
+  tenant_id: string;
+  id: string;
+  version: number;
+};
+
+async function markSlaBreaches(kind: "response" | "resolution"): Promise<number> {
+  const breachedColumn = kind === "response" ? "sla_response_breached_at" : "sla_resolution_breached_at";
+  const dueColumn = kind === "response" ? "sla_response_due_at" : "sla_resolution_due_at";
+  const metCondition =
+    kind === "response"
+      ? "(first_responded_at is null or first_responded_at > sla_response_due_at)"
+      : "(resolved_at is null or resolved_at > sla_resolution_due_at)";
+
+  const result = await pool.query<SlaBreachRow>(
+    `with due as (
+       select tenant_id, id
+       from tickets
+       where ${dueColumn} < now()
+         and ${breachedColumn} is null
+         and sla_paused_at is null
+         and ${metCondition}
+       order by ${dueColumn}
+       for update skip locked
+       limit 100
+     )
+     update tickets t
+     set ${breachedColumn} = now(), version = version + 1, updated_at = now()
+     from due
+     where t.tenant_id = due.tenant_id and t.id = due.id
+     returning t.tenant_id, t.id, t.version`,
+  );
+
+  for (const ticket of result.rows) {
+    await writeAudit(
+      pool,
+      ticket.tenant_id,
+      { id: null, role: "system" },
+      `ticket.sla_${kind}_breached`,
+      "ticket",
+      ticket.id,
+      { kind },
+      { breached: true },
+      randomUUID(),
+    );
+    await enqueueEvent(pool, ticket.tenant_id, "ticket", ticket.id, ticket.version, "ticket.sla_breached", {
+      ticketId: ticket.id,
+      kind,
+    });
+  }
+  return result.rowCount ?? 0;
+}
+
 async function runMaintenance(): Promise<void> {
+  const responseBreaches = await markSlaBreaches("response");
+  const resolutionBreaches = await markSlaBreaches("resolution");
+  if (responseBreaches + resolutionBreaches > 0) {
+    log("sla_breaches_recorded", { response: responseBreaches, resolution: resolutionBreaches });
+  }
   const closed = await autoCloseTickets();
   if (closed > 0) log("tickets_auto_closed", { count: closed });
 }

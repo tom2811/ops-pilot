@@ -41,6 +41,11 @@ export function AdminPage() {
   const [priorityKey, setPriorityKey] = useState("");
   const [priorityRank, setPriorityRank] = useState("5");
   const [priorityColor, setPriorityColor] = useState("gray");
+  const [slaName, setSlaName] = useState("");
+  const [slaPriority, setSlaPriority] = useState("");
+  const [slaCategory, setSlaCategory] = useState("");
+  const [slaResponse, setSlaResponse] = useState("60");
+  const [slaResolution, setSlaResolution] = useState("480");
 
   const [fieldLabel, setFieldLabel] = useState("");
   const [fieldKeyValue, setFieldKeyValue] = useState("");
@@ -63,6 +68,7 @@ export function AdminPage() {
         setCategoryTeam(next.teams.find((team) => team.slug === "service-desk")?.id ?? next.teams[0]?.id ?? "");
         setRuleCategory(next.categories[0]?.id ?? "");
         setRuleTeam(next.teams[0]?.id ?? "");
+        setSlaPriority(next.priorities[0]?.id ?? "");
       })
       .catch((caught) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -157,6 +163,21 @@ export function AdminPage() {
     });
   }
 
+  function submitSla(event: FormEvent): void {
+    event.preventDefault();
+    void run(
+      () =>
+        post(`/t/${tenantSlug}/sla-policies`, {
+          name: slaName,
+          priorityId: slaPriority || null,
+          categoryId: slaCategory || null,
+          responseMinutes: Number(slaResponse),
+          resolutionMinutes: Number(slaResolution),
+        }),
+      "SLA policy created.",
+    ).then(() => setSlaName(""));
+  }
+
   function submitField(event: FormEvent): void {
     event.preventDefault();
     const options = fieldOptions
@@ -201,6 +222,8 @@ export function AdminPage() {
   }
 
   const teamNameById = new Map(config.teams.map((team) => [team.id, team.name]));
+  const priorityNameById = new Map(config.priorities.map((priority) => [priority.id, priority.label]));
+  const categoryNameById = new Map(config.categories.map((category) => [category.id, category.name]));
 
   return (
     <div className="stack-lg">
@@ -314,6 +337,65 @@ export function AdminPage() {
             </div>
             <button className="button secondary" disabled={busy}>
               Create priority
+            </button>
+          </form>
+        </section>
+
+        <section className="card">
+          <h2>Add an SLA policy</h2>
+          <form className="stack" onSubmit={submitSla}>
+            <label>
+              Name
+              <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
+            </label>
+            <div className="inline-fields">
+              <label>
+                Priority
+                <select value={slaPriority} onChange={(event) => setSlaPriority(event.target.value)}>
+                  <option value="">All priorities</option>
+                  {config.priorities.map((priority) => (
+                    <option key={priority.id} value={priority.id}>
+                      {priority.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Category
+                <select value={slaCategory} onChange={(event) => setSlaCategory(event.target.value)}>
+                  <option value="">All categories</option>
+                  {config.categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="inline-fields">
+              <label>
+                Response minutes
+                <input
+                  type="number"
+                  min={1}
+                  value={slaResponse}
+                  onChange={(event) => setSlaResponse(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Resolution minutes
+                <input
+                  type="number"
+                  min={1}
+                  value={slaResolution}
+                  onChange={(event) => setSlaResolution(event.target.value)}
+                  required
+                />
+              </label>
+            </div>
+            <button className="button secondary" disabled={busy}>
+              Create SLA policy
             </button>
           </form>
         </section>
@@ -461,6 +543,26 @@ export function AdminPage() {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="card">
+          <h2>SLA policies</h2>
+          {config.sla_policies.length === 0 ? (
+            <EmptyState title="No SLA policies">Create one to add response and resolution targets.</EmptyState>
+          ) : (
+            <ul className="config-list">
+              {config.sla_policies.map((policy) => (
+                <li key={policy.id}>
+                  <strong>{policy.name}</strong>
+                  <span className="muted small">
+                    {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
+                    {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
+                    {policy.response_minutes}m / {policy.resolution_minutes}m
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="card">

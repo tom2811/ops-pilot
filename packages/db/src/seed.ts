@@ -3,6 +3,7 @@ import pg from "pg";
 import {
   DEFAULT_NOTIFICATION_TEMPLATES,
   DEFAULT_PRIORITIES,
+  DEFAULT_SLA_POLICIES,
   DEFAULT_STATUSES,
   DEFAULT_TRANSITIONS,
   type Role,
@@ -195,10 +196,27 @@ async function main() {
         );
       }
 
+      const priorityIdByKey = new Map<string, string>();
       for (const priority of DEFAULT_PRIORITIES) {
-        await client.query(
-          "insert into priorities (tenant_id, key, label, rank, color) values ($1, $2, $3, $4, $5)",
+        const row = await client.query<{ id: string }>(
+          "insert into priorities (tenant_id, key, label, rank, color) values ($1, $2, $3, $4, $5) returning id",
           [tenant.id, priority.key, priority.label, priority.rank, priority.color],
+        );
+        const id = row.rows[0]?.id;
+        if (id) priorityIdByKey.set(priority.key, id);
+      }
+      for (const policy of DEFAULT_SLA_POLICIES) {
+        await client.query(
+          `insert into sla_policies
+            (tenant_id, name, priority_id, response_minutes, resolution_minutes)
+           values ($1, $2, $3, $4, $5)`,
+          [
+            tenant.id,
+            policy.name,
+            priorityIdByKey.get(policy.priorityKey) ?? null,
+            policy.responseMinutes,
+            policy.resolutionMinutes,
+          ],
         );
       }
 

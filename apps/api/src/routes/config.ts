@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { routingConditionsSchema } from "@opspilot/core";
+import { routingConditionsSchema, slaPolicyInputSchema } from "@opspilot/core";
 import { requireAuth, requireRole, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
@@ -67,7 +67,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/t/:tenantSlug/config", async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     return withTenant(tenantId, userId, async (client) => {
-      const [teams, categories, priorities, statuses, customFields, routingRules, agents, settings] = await Promise.all([
+      const [teams, categories, priorities, statuses, customFields, routingRules, agents, settings, slaPolicies] = await Promise.all([
         client.query(
           "select id, slug, name from teams where tenant_id = $1 and is_active order by name",
           [tenantId],
@@ -116,6 +116,14 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version from tenant_settings where tenant_id = $1",
           [tenantId],
         ),
+        role === "employee"
+          ? Promise.resolve({ rows: [] })
+          : client.query(
+              `select id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active
+               from sla_policies where tenant_id = $1 and is_active
+               order by name`,
+              [tenantId],
+            ),
       ]);
 
       return {
@@ -127,6 +135,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         routing_rules: routingRules.rows,
         agents: agents.rows,
         settings: settings.rows[0] ?? null,
+        sla_policies: slaPolicies.rows,
       };
     });
   });
@@ -202,6 +211,40 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         req.correlationId,
       );
       return priority;
+    });
+  });
+
+  app.post("/t/:tenantSlug/sla-policies", { preHandler: requireRole("tenant_admin") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const input = slaPolicyInputSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `insert into sla_policies
+          (tenant_id, name, priority_id, category_id, response_minutes, resolution_minutes)
+         values ($1, $2, $3, $4, $5, $6)
+         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active`,
+        [
+          tenantId,
+          input.name,
+          input.priorityId ?? null,
+          input.categoryId ?? null,
+          input.responseMinutes,
+          input.resolutionMinutes,
+        ],
+      );
+      const policy = result.rows[0];
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.sla_policy_created",
+        "sla_policy",
+        policy.id,
+        null,
+        { name: input.name, priorityId: input.priorityId ?? null, categoryId: input.categoryId ?? null },
+        req.correlationId,
+      );
+      return policy;
     });
   });
 

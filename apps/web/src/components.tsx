@@ -13,6 +13,10 @@ export function RoleBadge({ role }: { role: string }) {
   return <span className="badge subtle">{humanize(role)}</span>;
 }
 
+export function SlaBadge({ label, state }: { label: string; state: string }) {
+  return <span className={`badge sla-${state}`}>{label}</span>;
+}
+
 export function PageHeader({
   eyebrow,
   title,

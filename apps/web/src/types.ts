@@ -64,6 +64,16 @@ export type NotificationTemplate = {
   updated_at: string;
 };
 
+export type SlaPolicy = {
+  id: string;
+  name: string;
+  priority_id: string | null;
+  category_id: string | null;
+  response_minutes: number;
+  resolution_minutes: number;
+  is_active: boolean;
+};
+
 export type Config = {
   teams: Team[];
   categories: Category[];
@@ -73,6 +83,7 @@ export type Config = {
   routing_rules: RoutingRule[];
   agents: Agent[];
   settings: TenantSettings | null;
+  sla_policies: SlaPolicy[];
 };
 
 export type Ticket = {
@@ -95,6 +106,12 @@ export type Ticket = {
   first_responded_at: string | null;
   resolved_at: string | null;
   closed_at: string | null;
+  sla_policy_id: string | null;
+  sla_response_due_at: string | null;
+  sla_resolution_due_at: string | null;
+  sla_response_breached_at: string | null;
+  sla_resolution_breached_at: string | null;
+  sla_paused_at: string | null;
   created_at: string;
   updated_at: string;
   status_key: string;

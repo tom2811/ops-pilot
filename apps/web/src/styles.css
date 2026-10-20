@@ -1091,3 +1091,28 @@ dd {
 .template-editor textarea {
   min-height: 7rem;
 }
+
+.badge.sla-breached {
+  background: #fde8e7;
+  color: #a61b1b;
+}
+
+.badge.sla-overdue {
+  background: #fff1dc;
+  color: #925100;
+}
+
+.badge.sla-paused {
+  background: #eef1f5;
+  color: #55606d;
+}
+
+.badge.sla-active {
+  background: #e8f4ff;
+  color: #0b5b91;
+}
+
+.badge.sla-met {
+  background: #e7f6ed;
+  color: #17663a;
+}

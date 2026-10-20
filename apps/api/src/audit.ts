@@ -6,7 +6,7 @@ export type AuditActor = {
 };
 
 export async function writeAudit(
-  client: pg.PoolClient,
+  client: pg.Pool | pg.PoolClient,
   tenantId: string,
   actor: AuditActor,
   action: string,

@@ -3,8 +3,21 @@ import { Link, useParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
 import { api, errorMessage, formatDate, humanize, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PriorityBadge, Spinner, StatusBadge } from "../components.js";
+import { EmptyState, ErrorAlert, PriorityBadge, SlaBadge, Spinner, StatusBadge } from "../components.js";
 import type { Config, TicketDetail } from "../types.js";
+
+function slaState(
+  due: string | null,
+  breached: string | null,
+  met: string | null,
+  paused: string | null,
+): "breached" | "met" | "paused" | "overdue" | "active" | null {
+  if (!due) return null;
+  if (breached) return "breached";
+  if (met) return "met";
+  if (paused) return "paused";
+  return new Date(due).getTime() < Date.now() ? "overdue" : "active";
+}
 
 type TimelineEvent = {
   time: string;
@@ -82,6 +95,18 @@ export function TicketDetailPage() {
   const needsSummary = Boolean(transition && (transition.requiresSummary || transition.stage === "resolved"));
   const needsReason = Boolean(transition && (transition.requiresReason || transition.stage === "pending" || reopening));
   const teamAgents = config?.agents.filter((agent) => agent.team_ids.includes(teamId)) ?? [];
+  const responseSla = slaState(
+    detail.sla_response_due_at,
+    detail.sla_response_breached_at,
+    detail.first_responded_at,
+    detail.sla_paused_at,
+  );
+  const resolutionSla = slaState(
+    detail.sla_resolution_due_at,
+    detail.sla_resolution_breached_at,
+    detail.resolved_at,
+    detail.sla_paused_at,
+  );
 
   const timeline: TimelineEvent[] = [
     ...detail.history.map((event) => ({
@@ -180,6 +205,8 @@ export function TicketDetailPage() {
             <PriorityBadge label={priorityMeta?.label ?? detail.priority_label} color={priorityMeta?.color} />
             <span className="badge subtle">{detail.category_name}</span>
             {detail.reopened_count > 0 && <span className="badge subtle">Reopened {detail.reopened_count}×</span>}
+            {resolutionSla === "breached" && <SlaBadge label="SLA breached" state="breached" />}
+            {resolutionSla === "paused" && <SlaBadge label="SLA paused" state="paused" />}
           </div>
         </div>
       </div>
@@ -318,6 +345,24 @@ export function TicketDetailPage() {
                 <dt>First response</dt>
                 <dd>{formatDate(detail.first_responded_at)}</dd>
               </div>
+              {detail.sla_response_due_at && (
+                <div>
+                  <dt>Response SLA</dt>
+                  <dd>
+                    {formatDate(detail.sla_response_due_at)}{" "}
+                    {responseSla && <SlaBadge label={responseSla} state={responseSla} />}
+                  </dd>
+                </div>
+              )}
+              {detail.sla_resolution_due_at && (
+                <div>
+                  <dt>Resolution SLA</dt>
+                  <dd>
+                    {formatDate(detail.sla_resolution_due_at)}{" "}
+                    {resolutionSla && <SlaBadge label={resolutionSla} state={resolutionSla} />}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Created</dt>
                 <dd>{formatDate(detail.created_at)}</dd>

@@ -30,6 +30,12 @@ export type TicketRow = {
   first_responded_at: Date | null;
   resolved_at: Date | null;
   closed_at: Date | null;
+  sla_policy_id: string | null;
+  sla_response_due_at: Date | null;
+  sla_resolution_due_at: Date | null;
+  sla_response_breached_at: Date | null;
+  sla_resolution_breached_at: Date | null;
+  sla_paused_at: Date | null;
   created_at: Date;
   updated_at: Date;
   status_key: string;
@@ -50,7 +56,10 @@ const ticketSelect = `
   select t.tenant_id, t.id, t.number, t.subject, t.description, t.requester_id, t.assignee_id,
          t.team_id, t.category_id, t.priority_id, t.status_id, t.custom_fields,
          t.resolution_summary, t.pending_reason, t.version, t.reopened_count,
-         t.first_responded_at, t.resolved_at, t.closed_at, t.created_at, t.updated_at,
+         t.first_responded_at, t.resolved_at, t.closed_at,
+         t.sla_policy_id, t.sla_response_due_at, t.sla_resolution_due_at,
+         t.sla_response_breached_at, t.sla_resolution_breached_at, t.sla_paused_at,
+         t.created_at, t.updated_at,
          s.key as status_key, s.label as status_label, s.stage as status_stage,
          c.name as category_name,
          p.key as priority_key, p.label as priority_label, p.rank as priority_rank,
@@ -223,11 +232,26 @@ export async function createTicket(
   const number = counter.rows[0]?.number;
   if (!number) throw new Error("Could not allocate ticket number");
 
+  const sla = await client.query<{ id: string; response_minutes: number; resolution_minutes: number }>(
+    `select id, response_minutes, resolution_minutes
+     from sla_policies
+     where tenant_id = $1 and is_active
+       and (priority_id is null or priority_id = $2)
+       and (category_id is null or category_id = $3)
+     order by (category_id is not null) desc, (priority_id is not null) desc, created_at
+     limit 1`,
+    [tenantId, input.priorityId, input.categoryId],
+  );
+  const slaPolicy = sla.rows[0];
+
   const id = randomUUID();
   await client.query(
     `insert into tickets
-      (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id, custom_fields)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id, custom_fields,
+       sla_policy_id, sla_response_due_at, sla_resolution_due_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+             now() + ($12::text || ' minutes')::interval,
+             now() + ($13::text || ' minutes')::interval)`,
     [
       tenantId,
       id,
@@ -239,6 +263,9 @@ export async function createTicket(
       input.priorityId,
       newStatus.id,
       JSON.stringify(customFields),
+      slaPolicy?.id ?? null,
+      slaPolicy?.response_minutes ?? null,
+      slaPolicy?.resolution_minutes ?? null,
     ],
   );
 
@@ -412,6 +439,13 @@ export async function applyTransition(
        closed_at = case when $4 = 'closed' then now()
                         when $4 = 'open' then null
                         else closed_at end,
+       sla_response_due_at = case when $9 then sla_response_due_at + (now() - sla_paused_at)
+                                  else sla_response_due_at end,
+       sla_resolution_due_at = case when $9 then sla_resolution_due_at + (now() - sla_paused_at)
+                                    else sla_resolution_due_at end,
+       sla_paused_at = case when $4 = 'pending' then coalesce(sla_paused_at, now())
+                            when $9 then null
+                            else sla_paused_at end,
        reopened_count = reopened_count + case when $7 then 1 else 0 end,
        version = version + 1,
        updated_at = now()
@@ -425,6 +459,7 @@ export async function applyTransition(
       input.reason ?? null,
       reopening,
       input.expectedVersion,
+      ticket.sla_paused_at !== null && targetStatus.stage !== "pending",
     ],
   );
   if ((updated.rowCount ?? 0) === 0) conflict("Ticket changed; reload and try again");

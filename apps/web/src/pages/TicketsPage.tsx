@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
 import { api, errorMessage, formatDate, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, PriorityBadge, StatusBadge } from "../components.js";
+import { EmptyState, ErrorAlert, PageHeader, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
 import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
@@ -414,12 +414,16 @@ export function TicketsPage() {
                   <th>Priority</th>
                   <th>Requester</th>
                   <th>Owner</th>
+                  <th>SLA</th>
                   <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {data?.items.map((ticket) => {
                   const priorityMeta = priorities.get(ticket.priority_key);
+                  const slaBreached = Boolean(ticket.sla_resolution_breached_at || ticket.sla_response_breached_at);
+                  const slaPaused = Boolean(ticket.sla_paused_at);
+                  const slaDue = ticket.sla_resolution_due_at;
                   return (
                     <tr key={ticket.id}>
                       <td className="mono nowrap">
@@ -444,6 +448,20 @@ export function TicketsPage() {
                       </td>
                       <td>{ticket.requester_name}</td>
                       <td>{ticket.assignee_name ?? "Unassigned"}</td>
+                      <td className="nowrap">
+                        {slaBreached ? (
+                          <SlaBadge label="Breached" state="breached" />
+                        ) : slaPaused ? (
+                          <SlaBadge label="Paused" state="paused" />
+                        ) : slaDue ? (
+                          <SlaBadge
+                            label={formatDate(slaDue)}
+                            state={new Date(slaDue).getTime() < Date.now() ? "overdue" : "active"}
+                          />
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
+                      </td>
                       <td className="nowrap muted">{formatDate(ticket.updated_at)}</td>
                     </tr>
                   );

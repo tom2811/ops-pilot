@@ -1,7 +1,7 @@
 import type pg from "pg";
 
 export async function enqueueEvent(
-  client: pg.PoolClient,
+  client: pg.Pool | pg.PoolClient,
   tenantId: string,
   aggregateType: string,
   aggregateId: string,
