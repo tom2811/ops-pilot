@@ -421,6 +421,7 @@ async function main() {
       [acme, acmeTicket1, agentAcme, "We found a concentrator firmware issue and are applying a fix."],
     );
 
+    const acmeTicket2 = randomUUID();
     await client.query(
       `insert into tickets
         (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id,
@@ -428,7 +429,7 @@ async function main() {
        values ($1,$2,2,$3,$4,$5,$6,$7,$8,$9,'2026-10-19T11:00:00Z','2026-10-19T11:00:00Z')`,
       [
         acme,
-        randomUUID(),
+        acmeTicket2,
         "New starter laptop",
         "Please prepare a laptop for a new starter on Monday.",
         employeeAcme,
@@ -487,6 +488,78 @@ async function main() {
         "2026-10-17T12:00:00Z",
       ],
     );
+
+    const auditCorrelation = randomUUID();
+    const auditRows: Array<{
+      actorId: string;
+      actorRole: string;
+      action: string;
+      entityType: string;
+      entityId: string;
+      before: unknown;
+      after: unknown;
+      createdAt: string;
+    }> = [
+      {
+        actorId: agentAcme,
+        actorRole: "agent",
+        action: "ticket.status_changed",
+        entityType: "ticket",
+        entityId: acmeTicket1,
+        before: { status: "new" },
+        after: { status: "in_progress" },
+        createdAt: "2026-10-18T09:30:00Z",
+      },
+      {
+        actorId: agentAcme,
+        actorRole: "agent",
+        action: "ticket.assigned",
+        entityType: "ticket",
+        entityId: acmeTicket1,
+        before: { assignee_id: null },
+        after: { assignee_id: agentAcme },
+        createdAt: "2026-10-18T09:20:00Z",
+      },
+      {
+        actorId: employeeAcme,
+        actorRole: "employee",
+        action: "ticket.created",
+        entityType: "ticket",
+        entityId: acmeTicket1,
+        before: null,
+        after: { subject: "VPN drops every 10 minutes" },
+        createdAt: "2026-10-18T09:00:00Z",
+      },
+      {
+        actorId: agentAcme,
+        actorRole: "agent",
+        action: "config.notification_template_updated",
+        entityType: "notification_template",
+        entityId: randomUUID(),
+        before: null,
+        after: { key: "ticket_created", subject: "Your ticket was created" },
+        createdAt: "2026-10-17T16:45:00Z",
+      },
+    ];
+    for (const row of auditRows) {
+      await client.query(
+        `insert into audit_log
+          (tenant_id, actor_id, actor_role, action, entity_type, entity_id, before, after, correlation_id, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [
+          acme,
+          row.actorId,
+          row.actorRole,
+          row.action,
+          row.entityType,
+          row.entityId,
+          row.before === null ? null : JSON.stringify(row.before),
+          row.after === null ? null : JSON.stringify(row.after),
+          auditCorrelation,
+          row.createdAt,
+        ],
+      );
+    }
 
     await client.query("commit");
     console.log("seeded acme and globex");

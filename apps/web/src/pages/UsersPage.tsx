@@ -25,6 +25,7 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   "tickets.assign": "Assign tickets",
   "tickets.delete": "Delete tickets",
   "reports.view": "View reports and dashboards",
+  "audit.view": "View the audit log",
 };
 
 export function UsersPage() {

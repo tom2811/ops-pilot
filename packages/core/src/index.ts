@@ -164,6 +164,7 @@ export const PERMISSION_KEYS = [
   "tickets.assign",
   "tickets.delete",
   "reports.view",
+  "audit.view",
 ] as const;
 
 export type Permission = (typeof PERMISSION_KEYS)[number];

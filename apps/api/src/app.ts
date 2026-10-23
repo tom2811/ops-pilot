@@ -17,6 +17,7 @@ import { ticketRoutes } from "./routes/tickets.js";
 import { configRoutes } from "./routes/config.js";
 import { automationRoutes } from "./routes/automation.js";
 import { notificationRoutes } from "./routes/notifications.js";
+import { auditRoutes } from "./routes/audit.js";
 import { attachmentRoutes } from "./routes/attachments.js";
 import "./types.js";
 
@@ -86,6 +87,7 @@ export async function buildApp() {
   await app.register(platformRoutes, { prefix: "/api" });
   await app.register(feedbackRoutes, { prefix: "/api" });
   await app.register(reportRoutes, { prefix: "/api" });
+  await app.register(auditRoutes, { prefix: "/api" });
 
   app.get("/api/health/live", async () => ({ ok: true }));
   app.get("/api/health", async (_req, reply) => {

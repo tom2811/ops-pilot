@@ -762,6 +762,18 @@ tbody tr:last-child td {
   gap: 0.55rem;
 }
 
+.audit-detail {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.35rem 0 0.6rem;
+}
+
+.audit-detail p {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
 .empty-state {
   text-align: center;
   padding: 2.5rem 1rem;

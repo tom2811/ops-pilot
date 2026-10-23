@@ -66,6 +66,8 @@ jobs:
             'http://localhost:3000/api/t/acme/reports?days=7' >/dev/null
           curl -fsS -b /tmp/opspilot-cookies \
             'http://localhost:3000/api/t/acme/users' >/dev/null
+          curl -fsS -b /tmp/opspilot-cookies \
+            'http://localhost:3000/api/t/acme/audit-log?pageSize=5' >/dev/null
 
   images:
     runs-on: ubuntu-latest

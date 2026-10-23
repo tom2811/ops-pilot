@@ -2,6 +2,7 @@ import { Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from
 import { useAuth } from "./auth.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
+import { AuditLogPage } from "./pages/AuditLogPage.js";
 import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { FeedbackPage } from "./pages/FeedbackPage.js";
@@ -93,6 +94,9 @@ function TenantLayout() {
           {membership.permissions.includes("users.manage") && (
             <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>
           )}
+          {membership.permissions.includes("audit.view") && (
+            <NavLink to={`/t/${tenantSlug}/audit`}>Audit</NavLink>
+          )}
         </nav>
         <div className="topbar-right">
           <select
@@ -161,6 +165,7 @@ export function App() {
         <Route path="admin" element={<AdminPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="audit" element={<AuditLogPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

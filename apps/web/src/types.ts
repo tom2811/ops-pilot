@@ -191,6 +191,28 @@ export type TicketList = {
   pageSize: number;
 };
 
+export type AuditEntry = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  actor_id: string | null;
+  actor_role: string;
+  actor_name: string | null;
+  before: unknown;
+  after: unknown;
+  correlation_id: string;
+  created_at: string;
+};
+
+export type AuditLog = {
+  items: AuditEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  entity_types: string[];
+};
+
 export type TenantUser = {
   id: string;
   email: string;

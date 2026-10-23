@@ -473,7 +473,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
            conditions = case when $4::jsonb is null then conditions else $4::jsonb end,
            team_id = coalesce($5, team_id),
            sort_order = coalesce($6, sort_order),
-           version = version + 1, updated_at = now()
+           version = version + 1
          where tenant_id = $1 and id = $2
          returning id, name, conditions, team_id, sort_order, version`,
         [
