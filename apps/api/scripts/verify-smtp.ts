@@ -1085,20 +1085,39 @@ async function main(): Promise<void> {
     };
   });
 
-  await scenario("suspended-tenant-still-sends", async () => {
+  await scenario("suspended-tenant-skips-mail", async () => {
     const subject = "Audit suspended tenant";
     await admin.query("update tenants set status = 'suspended' where id = $1", [tenantId]);
-    const row = await insertEmail({ subject, body: "suspended tenant body" });
-    const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) });
+    const email = await insertEmail({ subject, body: "suspended tenant body" });
+    const notification = await insertNotification({
+      subject: "Audit suspended tenant notification",
+      body: "suspended tenant notification",
+    });
+    const smtp = new ScriptedSmtp(async () => ({ code: 250, message: "2.0.0 accepted" }));
+    const port = await smtp.start();
+    const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(port) });
     try {
-      await waitFor("suspended tenant email sent", 20_000, async () => (await emailRow(row.id)).delivery_status === "sent");
+      await waitFor("suspended email skipped", 20_000, async () => (await emailRow(email.id)).delivery_status === "skipped");
+      await waitFor("suspended notification skipped", 20_000, async () => {
+        return (await notificationRow(notification.id)).delivery_status === "skipped";
+      });
+      await sleep(500);
     } finally {
       await stopChild(worker);
+      await smtp.stop();
       await admin.query("update tenants set status = 'active' where id = $1", [tenantId]);
     }
+    const emailAfter = await emailRow(email.id);
+    const notificationAfter = await notificationRow(notification.id);
     return {
       tenantStatusAtSend: "suspended",
-      emailStatus: (await emailRow(row.id)).delivery_status,
+      emailStatus: emailAfter.delivery_status,
+      emailError: emailAfter.last_error,
+      emailBodyRedacted: emailAfter.body === "[body redacted]",
+      notificationDelivery: notificationAfter.delivery_status,
+      notificationLegacyStatus: notificationAfter.status,
+      notificationError: notificationAfter.last_error,
+      smtpAttempts: smtp.attempts.length,
       archivedEmails: await archiveCount(subject),
     };
   });

@@ -94,14 +94,17 @@ type NotificationRow = {
   body: string;
   attempts: number;
   recipient_email: string;
+  tenant_status: string;
 };
 
 type EmailRow = {
   id: string;
+  tenant_id: string | null;
   recipient: string;
   subject: string;
   body: string;
   attempts: number;
+  tenant_status: string | null;
 };
 
 function hashToken(token: string): string {
@@ -315,7 +318,8 @@ async function claimNotifications(limit = 10): Promise<NotificationRow[]> {
        limit $1
      ) claimed, users u
      where n.id = claimed.id and u.id = n.recipient_id
-     returning n.id, n.tenant_id, n.channel, n.subject, n.body, n.attempts, u.email as recipient_email`,
+     returning n.id, n.tenant_id, n.channel, n.subject, n.body, n.attempts, u.email as recipient_email,
+               (select status from tenants where id = n.tenant_id) as tenant_status`,
     [limit],
   );
   return result.rows;
@@ -347,6 +351,10 @@ async function processNotifications(): Promise<void> {
   for (const notification of notifications) {
     if (notification.channel !== "email") {
       await markNotificationSkipped(notification, `Unsupported channel: ${notification.channel}`);
+      continue;
+    }
+    if (notification.tenant_status !== "active") {
+      await markNotificationSkipped(notification, `Tenant is not active: ${notification.tenant_status}`);
       continue;
     }
     if (!mailer) {
@@ -413,7 +421,8 @@ async function claimEmails(limit = 10): Promise<EmailRow[]> {
        limit $1
      ) claimed
      where m.id = claimed.id
-     returning m.id, m.recipient, m.subject, m.body, m.attempts`,
+     returning m.id, m.tenant_id, m.recipient, m.subject, m.body, m.attempts,
+               (select status from tenants where id = m.tenant_id) as tenant_status`,
     [limit],
   );
   return result.rows;
@@ -431,6 +440,16 @@ async function assertWorkerDatabaseRole(): Promise<string> {
     );
   }
   return row.role;
+}
+
+async function markEmailSkipped(email: EmailRow, reason: string): Promise<void> {
+  await pool.query(
+    `update email_messages
+     set delivery_status = 'skipped', last_error = $2, locked_until = null, body = $3
+     where id = $1`,
+    [email.id, reason, REDACTED_BODY],
+  );
+  log("email_skipped", { emailId: email.id, reason });
 }
 
 async function deferEmail(email: EmailRow): Promise<void> {
@@ -463,6 +482,10 @@ async function resumeDeferredMail(): Promise<void> {
 async function processEmails(): Promise<void> {
   const emails = await claimEmails();
   for (const email of emails) {
+    if (email.tenant_id && email.tenant_status !== "active") {
+      await markEmailSkipped(email, `Tenant is not active: ${email.tenant_status}`);
+      continue;
+    }
     if (!mailer) {
       await deferEmail(email);
       continue;

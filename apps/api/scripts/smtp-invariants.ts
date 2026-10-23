@@ -27,6 +27,8 @@ try {
     select count(*)::int as value from email_messages where delivery_status = 'pending' and sent_at is not null`);
   await check("email_skipped_without_reason", "Invariant: skipped records why", `
     select count(*)::int as value from email_messages where delivery_status = 'skipped' and coalesce(last_error,'') = ''`);
+  await check("notification_skipped_without_reason", "Invariant: skipped records why", `
+    select count(*)::int as value from notifications where delivery_status = 'skipped' and coalesce(last_error,'') = ''`);
   await check("email_failed_below_attempt_cap", "Invariant: failed after five attempts or a permanent bounce", `
     select count(*)::int as value from email_messages
     where delivery_status = 'failed' and attempts < 5 and bounce_reason is null`);
@@ -67,6 +69,7 @@ console.log(JSON.stringify(output, null, 2));
 if (process.argv.includes("--strict")) {
   const violations = checks.filter((entry) =>
     ["email_sent_without_timestamp", "email_pending_with_timestamp", "email_skipped_without_reason",
+      "notification_skipped_without_reason",
       "email_failed_below_attempt_cap", "notification_failed_below_attempt_cap",
       "email_sent_without_provider_id", "notification_sent_without_timestamp",
       "cleartext_token_rows", "terminal_email_body_redacted", "duplicate_email_content",
