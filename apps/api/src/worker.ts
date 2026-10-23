@@ -48,6 +48,17 @@ if (workerEnv.N8N_WEBHOOK_URL && !workerEnv.N8N_WEBHOOK_SECRET) {
   throw new Error("N8N_WEBHOOK_SECRET is required when N8N_WEBHOOK_URL is set");
 }
 
+function smtpFromDomain(from: string): string {
+  const address = from.match(/<([^>]+)>/)?.[1] ?? from;
+  return address.split("@").pop()?.trim() || "opspilot.local";
+}
+
+const messageIdDomain = smtpFromDomain(workerEnv.SMTP_FROM);
+
+function deliveryMessageId(kind: "email" | "notification", id: string): string {
+  return `<${kind}-${id}@${messageIdDomain}>`;
+}
+
 const pool = new pg.Pool({ connectionString, max: 4 });
 const mailer = createMailer(
   workerEnv.SMTP_HOST
@@ -343,6 +354,7 @@ async function processNotifications(): Promise<void> {
         to: notification.recipient_email,
         subject: notification.subject,
         text: notification.body,
+        messageId: deliveryMessageId("notification", notification.id),
       });
       await pool.query(
         `update notifications
@@ -438,6 +450,7 @@ async function processEmails(): Promise<void> {
         to: email.recipient,
         subject: email.subject,
         text: email.body,
+        messageId: deliveryMessageId("email", email.id),
       });
       await pool.query(
         `update email_messages

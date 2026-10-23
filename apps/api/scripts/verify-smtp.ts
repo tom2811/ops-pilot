@@ -256,6 +256,10 @@ function tokenFromUrl(url: string): string {
   return parsed.searchParams.get("token") ?? "";
 }
 
+function messageIdFromData(data: string): string | null {
+  return data.match(/^message-id:\s*(<[^>\r\n]+>)/im)?.[1] ?? null;
+}
+
 async function main(): Promise<void> {
   await mkdir(artifactDir, { recursive: true });
   line("starting Postgres, Mailpit, and GreenMail containers");
@@ -860,9 +864,14 @@ async function main(): Promise<void> {
       }
     }
     await smtp.stop();
+    const firstMessageId = messageIdFromData(smtp.accepted[0]?.data ?? "");
+    const retryMessageId = messageIdFromData(smtp.accepted[smtp.accepted.length - 1]?.data ?? "");
     return {
       smtpAcceptedBeforeRestart: acceptedBeforeRestart,
       smtpAcceptedAfterRestart: smtp.accepted.length,
+      firstMessageId,
+      retryMessageId,
+      messageIdReusedOnRetry: smtp.accepted.length > 1 && firstMessageId !== null && firstMessageId === retryMessageId,
       postKill: postKill && {
         deliveryStatus: postKill.delivery_status,
         attempts: postKill.attempts,
@@ -921,10 +930,15 @@ async function main(): Promise<void> {
       }
     }
     await smtp.stop();
+    const firstMessageId = messageIdFromData(smtp.accepted[0]?.data ?? "");
+    const retryMessageId = messageIdFromData(smtp.accepted[smtp.accepted.length - 1]?.data ?? "");
     return {
       terminatedPid,
       smtpAcceptedBeforeRestart: acceptedBeforeRestart,
       smtpAcceptedAfterRestart: smtp.accepted.length,
+      firstMessageId,
+      retryMessageId,
+      messageIdReusedOnRetry: smtp.accepted.length > 1 && firstMessageId !== null && firstMessageId === retryMessageId,
       postTerminate: postTerminate && {
         deliveryStatus: postTerminate.delivery_status,
         attempts: postTerminate.attempts,

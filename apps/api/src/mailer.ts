@@ -11,7 +11,7 @@ export type MailerConfig = {
 };
 
 export type Mailer = {
-  send(input: { to: string; subject: string; text: string }): Promise<string | undefined>;
+  send(input: { to: string; subject: string; text: string; messageId?: string }): Promise<string | undefined>;
 };
 
 export function createMailer(config: MailerConfig | null): Mailer | null {
@@ -34,6 +34,7 @@ export function createMailer(config: MailerConfig | null): Mailer | null {
         to: input.to,
         subject: input.subject,
         text: input.text,
+        messageId: input.messageId,
       });
       return info.messageId;
     },
