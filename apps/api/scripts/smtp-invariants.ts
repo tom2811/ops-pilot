@@ -31,8 +31,8 @@ try {
     select count(*)::int as value from email_messages where delivery_status = 'failed' and attempts < 5`);
   await check("email_sent_without_provider_id", "Invariant: sent has SMTP message id", `
     select count(*)::int as value from email_messages where delivery_status = 'sent' and provider_message_id is null`);
-  await check("notification_legacy_lie", "Legacy status=sent while delivery is not sent", `
-    select count(*)::int as value from notifications where status = 'sent' and delivery_status <> 'sent'`);
+  await check("notification_legacy_lie", "Legacy status differs from delivery status", `
+    select count(*)::int as value from notifications where status::text <> delivery_status`);
   await check("notification_sent_without_timestamp", "Invariant: sent implies sent_at", `
     select count(*)::int as value from notifications where delivery_status = 'sent' and sent_at is null`);
   await check("cleartext_token_rows", "Email bodies containing a live token URL", `

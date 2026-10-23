@@ -9,6 +9,7 @@ import { writeAudit } from "./audit.js";
 import { enqueueEvent } from "./outbox.js";
 
 const REDACTED_BODY = "[body redacted]";
+const SMTP_NOT_CONFIGURED = "SMTP is not configured";
 
 config({ path: resolve(import.meta.dirname, "../../../.env") });
 config();
@@ -307,11 +308,22 @@ async function claimNotifications(limit = 10): Promise<NotificationRow[]> {
 async function markNotificationSkipped(notification: NotificationRow, reason: string): Promise<void> {
   await pool.query(
     `update notifications
-     set delivery_status = 'skipped', last_error = $2, locked_until = null
+     set delivery_status = 'skipped', status = 'skipped', last_error = $2, locked_until = null
      where id = $1`,
     [notification.id, reason],
   );
   log("notification_skipped", { notificationId: notification.id, reason });
+}
+
+async function deferNotification(notification: NotificationRow): Promise<void> {
+  await pool.query(
+    `update notifications
+     set status = 'pending', last_error = $2,
+         next_attempt_at = now() + interval '60 seconds', locked_until = null
+     where id = $1`,
+    [notification.id, SMTP_NOT_CONFIGURED],
+  );
+  log("notification_deferred", { notificationId: notification.id, reason: SMTP_NOT_CONFIGURED });
 }
 
 async function processNotifications(): Promise<void> {
@@ -322,7 +334,7 @@ async function processNotifications(): Promise<void> {
       continue;
     }
     if (!mailer) {
-      await markNotificationSkipped(notification, "SMTP is not configured");
+      await deferNotification(notification);
       continue;
     }
     const attempts = notification.attempts + 1;
@@ -334,7 +346,7 @@ async function processNotifications(): Promise<void> {
       });
       await pool.query(
         `update notifications
-         set delivery_status = 'sent', sent_at = now(), attempts = $2,
+         set delivery_status = 'sent', status = 'sent', sent_at = now(), attempts = $2,
              provider_message_id = $3, last_error = null, locked_until = null
          where id = $1`,
         [notification.id, attempts, messageId ?? null],
@@ -345,7 +357,7 @@ async function processNotifications(): Promise<void> {
       const dead = attempts >= 5;
       await pool.query(
         `update notifications
-         set delivery_status = $2,
+         set delivery_status = $2, status = $2::notification_status,
              attempts = $3,
              next_attempt_at = case when $2 = 'pending' then now() + ($4::text || ' seconds')::interval
                                     else next_attempt_at end,
@@ -386,17 +398,38 @@ async function claimEmails(limit = 10): Promise<EmailRow[]> {
   return result.rows;
 }
 
+async function deferEmail(email: EmailRow): Promise<void> {
+  await pool.query(
+    `update email_messages
+     set last_error = $2, next_attempt_at = now() + interval '60 seconds', locked_until = null
+     where id = $1`,
+    [email.id, SMTP_NOT_CONFIGURED],
+  );
+  log("email_deferred", { emailId: email.id, reason: SMTP_NOT_CONFIGURED });
+}
+
+async function resumeDeferredMail(): Promise<void> {
+  if (!mailer) return;
+  const emails = await pool.query(
+    `update email_messages set next_attempt_at = now()
+     where delivery_status = 'pending' and last_error = $1`,
+    [SMTP_NOT_CONFIGURED],
+  );
+  const notifications = await pool.query(
+    `update notifications set next_attempt_at = now()
+     where delivery_status = 'pending' and last_error = $1`,
+    [SMTP_NOT_CONFIGURED],
+  );
+  if ((emails.rowCount ?? 0) + (notifications.rowCount ?? 0) > 0) {
+    log("deferred_mail_resumed", { emails: emails.rowCount ?? 0, notifications: notifications.rowCount ?? 0 });
+  }
+}
+
 async function processEmails(): Promise<void> {
   const emails = await claimEmails();
   for (const email of emails) {
     if (!mailer) {
-      await pool.query(
-        `update email_messages
-         set delivery_status = 'skipped', last_error = 'SMTP is not configured',
-             locked_until = null, body = $2
-         where id = $1`,
-        [email.id, REDACTED_BODY],
-      );
+      await deferEmail(email);
       continue;
     }
     const attempts = email.attempts + 1;
@@ -556,5 +589,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 log("worker_started", { pollMs: workerEnv.WORKER_POLL_MS, mailConfigured: Boolean(mailer) });
+await resumeDeferredMail();
 await loop();
 await pool.end();

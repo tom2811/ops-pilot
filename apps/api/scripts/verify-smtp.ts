@@ -373,7 +373,7 @@ async function main(): Promise<void> {
     const row = await admin.query<NotificationRow>(
       `insert into notifications
          (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, subject, body)
-       values ($1, $2, $3, $4, 'email', $5, 'sent', $6, $7)
+       values ($1, $2, $3, $4, 'email', $5, 'pending', $6, $7)
        returning id, delivery_status, status, attempts, last_error, sent_at, subject, body`,
       [tenantId, eventId, ticketId, input.recipientId ?? recipientId, `smtp-audit-${randomUUID()}`, input.subject, input.body],
     );
@@ -664,45 +664,65 @@ async function main(): Promise<void> {
     };
   });
 
-  await scenario("skipped-is-terminal", async () => {
-    const token = `skipped-token-${randomUUID()}`;
+  await scenario("missing-smtp-defers-then-delivers", async () => {
+    const token = `deferred-token-${randomUUID()}`;
     const email = await insertEmail({
-      subject: "Audit skipped email",
+      subject: "Audit deferred email",
       body: `Reset: http://127.0.0.1:5173/reset-password?token=${token}`,
     });
     const notification = await insertNotification({
-      subject: "Audit skipped notification",
+      subject: "Audit deferred notification",
       body: `Notification reset token ${token}`,
     });
 
     const noSmtp = startWorker({ SMTP_HOST: "", SMTP_PORT: "" });
-    await waitFor("email skipped", 15_000, async () => (await emailRow(email.id)).delivery_status === "skipped");
-    await waitFor("notification skipped", 15_000, async () => (await notificationRow(notification.id)).delivery_status === "skipped");
+    await waitFor("email deferred", 15_000, async () => {
+      const row = await emailRow(email.id);
+      return row.delivery_status === "pending" && row.last_error === "SMTP is not configured" && row.attempts === 0;
+    });
+    await waitFor("notification deferred", 15_000, async () => {
+      const row = await notificationRow(notification.id);
+      return row.delivery_status === "pending" && row.last_error === "SMTP is not configured" && row.attempts === 0;
+    });
     await stopChild(noSmtp);
-    const afterSkip = {
+    const whileDeferred = {
       email: await emailRow(email.id),
       notification: await notificationRow(notification.id),
     };
 
     const withSmtp = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) });
-    await sleep(4000);
-    await stopChild(withSmtp);
+    try {
+      await waitFor("email delivered after SMTP configured", 20_000, async () => {
+        return (await emailRow(email.id)).delivery_status === "sent";
+      });
+      await waitFor("notification delivered after SMTP configured", 20_000, async () => {
+        return (await notificationRow(notification.id)).delivery_status === "sent";
+      });
+    } finally {
+      await stopChild(withSmtp);
+    }
+    const delivered = await emailRow(email.id);
+    const deliveredNotification = await notificationRow(notification.id);
     return {
-      afterSkip: {
-        emailStatus: afterSkip.email.delivery_status,
-        emailError: afterSkip.email.last_error,
-        notificationDelivery: afterSkip.notification.delivery_status,
-        notificationLegacyStatus: afterSkip.notification.status,
-        notificationError: afterSkip.notification.last_error,
+      whileDeferred: {
+        emailStatus: whileDeferred.email.delivery_status,
+        emailAttempts: whileDeferred.email.attempts,
+        emailError: whileDeferred.email.last_error,
+        emailBodyContainsToken: whileDeferred.email.body.includes(token),
+        notificationDelivery: whileDeferred.notification.delivery_status,
+        notificationLegacyStatus: whileDeferred.notification.status,
+        notificationAttempts: whileDeferred.notification.attempts,
+        notificationError: whileDeferred.notification.last_error,
       },
       afterSmtpConfigured: {
-        emailStatus: (await emailRow(email.id)).delivery_status,
-        emailAttempts: (await emailRow(email.id)).attempts,
-        notificationDelivery: (await notificationRow(notification.id)).delivery_status,
-        notificationLegacyStatus: (await notificationRow(notification.id)).status,
+        emailStatus: delivered.delivery_status,
+        emailAttempts: delivered.attempts,
+        emailBodyContainsToken: delivered.body.includes(token),
+        notificationDelivery: deliveredNotification.delivery_status,
+        notificationLegacyStatus: deliveredNotification.status,
+        notificationAttempts: deliveredNotification.attempts,
         archivedEmails: await archiveCount(email.subject),
       },
-      cleartextTokenStillInBody: (await emailRow(email.id)).body.includes(token),
     };
   });
 

@@ -150,7 +150,7 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
       const inserted = await client.query(
         `insert into notifications
           (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, subject, body)
-         values ($1, $2, $3, $4, $5, $6, 'sent', $7, $8)
+         values ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
          on conflict (tenant_id, dedupe_key) do nothing
          returning id`,
         [
