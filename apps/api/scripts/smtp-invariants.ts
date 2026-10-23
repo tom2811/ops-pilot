@@ -38,6 +38,9 @@ try {
   await check("cleartext_token_rows", "Email bodies containing a live token URL", `
     select count(*)::int as value from email_messages
     where body ~* '(token=|/invite/|/feedback\\?token=)'`);
+  await check("terminal_email_body_redacted", "Terminal email bodies are redacted", `
+    select count(*)::int as value from email_messages
+    where delivery_status in ('sent', 'failed', 'skipped') and body <> '[body redacted]'`);
   await check("active_locks", "Rows leased by a live or dead worker", `
     select count(*)::int as value from email_messages where delivery_status = 'pending' and locked_until > now()`);
   await check("stale_locks", "Pending rows with expired leases (reclaimable)", `
@@ -61,7 +64,8 @@ if (process.argv.includes("--strict")) {
   const violations = checks.filter((entry) =>
     ["email_sent_without_timestamp", "email_pending_with_timestamp", "email_skipped_without_reason",
       "email_failed_below_attempt_cap", "email_sent_without_provider_id", "notification_sent_without_timestamp",
-      "cleartext_token_rows", "duplicate_email_content", "notification_legacy_lie"].includes(entry.name) &&
+      "cleartext_token_rows", "terminal_email_body_redacted", "duplicate_email_content",
+      "notification_legacy_lie"].includes(entry.name) &&
       entry.value !== 0 && entry.value !== null && (!Array.isArray(entry.value) || entry.value.length > 0),
   );
   if (violations.length > 0) process.exitCode = 1;

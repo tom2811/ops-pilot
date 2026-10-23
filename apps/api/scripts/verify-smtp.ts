@@ -328,6 +328,9 @@ async function main(): Promise<void> {
   );
   const tenantId = tenant.rows[0]?.id;
   if (!tenantId) throw new Error("seed did not create acme tenant");
+  const otherTenant = await admin.query<{ id: string }>("select id from tenants where slug = 'globex'");
+  const otherTenantId = otherTenant.rows[0]?.id;
+  if (!otherTenantId) throw new Error("seed did not create globex tenant");
   const recipient = await admin.query<{ user_id: string; email: string }>(
     `select m.user_id, u.email from memberships m join users u on u.id = m.user_id
      where m.tenant_id = $1 and u.email = 'employee@acme.test'`,
@@ -525,6 +528,15 @@ async function main(): Promise<void> {
 
   const archiveCount = async (subject: string): Promise<number> => (await mailpitForSubject(subject)).length;
 
+  const databaseDump = (): string => {
+    const dump = spawnSync("docker", ["exec", postgres.getId(), "pg_dump", "-U", "postgres", "opspilot"], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    if (dump.status !== 0) throw new Error(`pg_dump failed: ${dump.stderr}`);
+    return dump.stdout;
+  };
+
   await scenario("baseline-real-reset-and-invite", async () => {
     const { url, port } = await apiBase();
     const api = await startApi(port);
@@ -616,19 +628,18 @@ async function main(): Promise<void> {
       subject: "Audit backup token",
       body: `Reset: http://127.0.0.1:5173/reset-password?token=${token}`,
     });
-    const dump = spawnSync("docker", ["exec", postgres.getId(), "pg_dump", "-U", "postgres", "opspilot"], {
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    if (dump.status !== 0) throw new Error(`pg_dump failed: ${dump.stderr}`);
+    const dumpBeforeSend = databaseDump();
     const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) });
     await waitFor("backup email sent", 20_000, async () => (await emailRow(row.id)).delivery_status === "sent");
     await stopChild(worker);
+    const dumpAfterSend = databaseDump();
     return {
       tokenSha256: createHash("sha256").update(token).digest("hex"),
-      tokenOccurrencesInDump: dump.stdout.split(token).length - 1,
+      tokenOccurrencesInDumpBeforeSend: dumpBeforeSend.split(token).length - 1,
+      tokenOccurrencesInDumpAfterSend: dumpAfterSend.split(token).length - 1,
       tokenPresentInWorkerLogs: workerLogs(worker).some((entry) => entry.includes(token)),
-      tokenRecipientVisibleInDump: dump.stdout.includes(recipientEmail),
+      tokenRecipientVisibleInDump: dumpAfterSend.includes(recipientEmail),
+      bodyAfterSend: (await emailRow(row.id)).body,
     };
   });
 
@@ -946,29 +957,41 @@ async function main(): Promise<void> {
     const notification = await insertNotification({ subject: "Audit app role notification", body: "app role notification" });
     const appClient = new pg.Client({ connectionString: appUrl });
     await appClient.connect();
-    let visibility: { email: number; notifications: number; tenants: number };
-    try {
+    const visibility = async (): Promise<{ email: number; notifications: number; tenants: number }> => {
       const emailCount = await appClient.query<{ count: number }>("select count(*)::int as count from email_messages");
       const notificationCount = await appClient.query<{ count: number }>("select count(*)::int as count from notifications");
       const tenantCount = await appClient.query<{ count: number }>("select count(*)::int as count from tenants");
-      visibility = {
+      return {
         email: emailCount.rows[0]?.count ?? -1,
         notifications: notificationCount.rows[0]?.count ?? -1,
         tenants: tenantCount.rows[0]?.count ?? -1,
       };
+    };
+    let scopedVisibility: {
+      withoutTenant: { email: number; notifications: number; tenants: number };
+      ownTenant: { email: number; notifications: number; tenants: number };
+      foreignTenant: { email: number; notifications: number; tenants: number };
+    };
+    try {
+      const withoutTenant = await visibility();
+      await appClient.query("select set_config('app.tenant_id', $1, false)", [tenantId]);
+      const ownTenant = await visibility();
+      await appClient.query("select set_config('app.tenant_id', $1, false)", [otherTenantId]);
+      const foreignTenant = await visibility();
+      scopedVisibility = { withoutTenant, ownTenant, foreignTenant };
     } finally {
       await appClient.end();
     }
     const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) }, appUrl);
     try {
-      await waitFor("email sent under app role", 20_000, async () => (await emailRow(email.id)).delivery_status === "sent");
-      await sleep(1000);
+      await sleep(2000);
     } finally {
       await stopChild(worker);
     }
     return {
-      appRoleVisibility: visibility,
+      appRoleVisibility: scopedVisibility,
       emailStatus: (await emailRow(email.id)).delivery_status,
+      appRoleWorkerSentEmail: (await emailRow(email.id)).delivery_status === "sent",
       notificationDelivery: (await notificationRow(notification.id)).delivery_status,
       notificationLegacyStatus: (await notificationRow(notification.id)).status,
       notificationStillPending: (await notificationRow(notification.id)).delivery_status === "pending",

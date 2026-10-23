@@ -143,7 +143,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         [user.id, hashToken(token)],
       );
       const link = webUrl(`/reset-password?token=${encodeURIComponent(token)}`);
-      await enqueueEmail(pool, {
+      await enqueueEmail(adminPool, {
         tenantId: null,
         recipient: user.email,
         subject: "Reset your OpsPilot password",

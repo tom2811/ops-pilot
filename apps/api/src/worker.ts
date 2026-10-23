@@ -8,6 +8,8 @@ import { createMailer } from "./mailer.js";
 import { writeAudit } from "./audit.js";
 import { enqueueEvent } from "./outbox.js";
 
+const REDACTED_BODY = "[body redacted]";
+
 config({ path: resolve(import.meta.dirname, "../../../.env") });
 config();
 
@@ -390,9 +392,10 @@ async function processEmails(): Promise<void> {
     if (!mailer) {
       await pool.query(
         `update email_messages
-         set delivery_status = 'skipped', last_error = 'SMTP is not configured', locked_until = null
+         set delivery_status = 'skipped', last_error = 'SMTP is not configured',
+             locked_until = null, body = $2
          where id = $1`,
-        [email.id],
+        [email.id, REDACTED_BODY],
       );
       continue;
     }
@@ -406,9 +409,10 @@ async function processEmails(): Promise<void> {
       await pool.query(
         `update email_messages
          set delivery_status = 'sent', sent_at = now(), attempts = $2,
-             provider_message_id = $3, last_error = null, locked_until = null
+             provider_message_id = $3, last_error = null, locked_until = null,
+             body = $4
          where id = $1`,
-        [email.id, attempts, messageId ?? null],
+        [email.id, attempts, messageId ?? null, REDACTED_BODY],
       );
       log("email_sent", { emailId: email.id });
     } catch (error) {
@@ -419,9 +423,17 @@ async function processEmails(): Promise<void> {
          set delivery_status = $2, attempts = $3,
              next_attempt_at = case when $2 = 'pending' then now() + ($4::text || ' seconds')::interval
                                     else next_attempt_at end,
-             last_error = $5, locked_until = null
+             last_error = $5, locked_until = null,
+             body = case when $2 = 'failed' then $6 else body end
          where id = $1`,
-        [email.id, dead ? "failed" : "pending", attempts, String(Math.min(60, 2 ** attempts)), message.slice(0, 2000)],
+        [
+          email.id,
+          dead ? "failed" : "pending",
+          attempts,
+          String(Math.min(60, 2 ** attempts)),
+          message.slice(0, 2000),
+          REDACTED_BODY,
+        ],
       );
       log("email_failed", { emailId: email.id, attempts, dead, error: message });
     }
