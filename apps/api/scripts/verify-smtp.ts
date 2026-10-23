@@ -1085,6 +1085,137 @@ async function main(): Promise<void> {
     };
   });
 
+  await scenario("reply-and-resolution-notifications", async () => {
+    const setup = await admin.query<{
+      category_id: string;
+      priority_id: string;
+      team_id: string;
+      agent_id: string;
+      employee_id: string;
+      resolved_status_id: string;
+    }>(
+      `select c.id as category_id, p.id as priority_id, tm.id as team_id,
+              agent.id as agent_id, employee.id as employee_id,
+              resolved.id as resolved_status_id
+       from tenants t
+       join categories c on c.tenant_id = t.id and c.is_active
+       join priorities p on p.tenant_id = t.id and p.key = 'p3'
+       join teams tm on tm.tenant_id = t.id and tm.slug = 'service-desk'
+       join users agent on agent.email = 'agent@acme.test'
+       join users employee on employee.email = 'employee@acme.test'
+       join ticket_statuses resolved on resolved.tenant_id = t.id and resolved.key = 'resolved'
+       where t.id = $1
+       limit 1`,
+      [tenantId],
+    );
+    const ids = setup.rows[0];
+    if (!ids) throw new Error("seed missing notification scenario data");
+
+    const { url, port } = await apiBase();
+    const api = await startApi(port);
+    const login = async (email: string): Promise<string> => {
+      const response = await fetch(`${url}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "Passw0rd!" }),
+      });
+      if (!response.ok) throw new Error(`login failed for ${email}: ${response.status} ${await response.text()}`);
+      const cookie = response.headers
+        .getSetCookie()
+        .map((value) => value.split(";")[0])
+        .find((value) => value?.startsWith("opspilot_session="));
+      if (!cookie) throw new Error(`login did not return a session cookie for ${email}`);
+      return cookie;
+    };
+    const request = async <T>(cookie: string, path: string, method: string, body?: unknown): Promise<T> => {
+      const response = await fetch(`${url}${path}`, {
+        method,
+        headers: { cookie, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status} ${text}`);
+      return (text ? JSON.parse(text) : null) as T;
+    };
+
+    try {
+      const employeeCookie = await login("employee@acme.test");
+      const adminCookie = await login("admin@acme.test");
+      const number = Math.floor(Math.random() * 1_000_000);
+      const ticket = await request<{ id: string; number: number; version: number }>(
+        employeeCookie,
+        "/api/t/acme/tickets",
+        "POST",
+        {
+          subject: `Audit notification ticket ${number}`,
+          description: "VPN keeps dropping",
+          categoryId: ids.category_id,
+          priorityId: ids.priority_id,
+          customFields: { site: "HQ" },
+        },
+      );
+      await request<unknown>(adminCookie, `/api/t/acme/tickets/${ticket.id}/assign`, "POST", {
+        teamId: ids.team_id,
+        assigneeId: ids.agent_id,
+        expectedVersion: ticket.version,
+      });
+      await request<unknown>(adminCookie, `/api/t/acme/tickets/${ticket.id}/comments`, "POST", {
+        body: "We reset the VPN profile.",
+        visibility: "public",
+      });
+      const detail = await request<{ version: number }>(
+        adminCookie,
+        `/api/t/acme/tickets/${ticket.id}`,
+        "GET",
+      );
+      await request<unknown>(adminCookie, `/api/t/acme/tickets/${ticket.id}/transitions`, "POST", {
+        toStatusId: ids.resolved_status_id,
+        expectedVersion: detail.version,
+        resolutionSummary: "VPN profile reset and verified.",
+      });
+
+      const replySubject = `New reply on ticket #${ticket.number}`;
+      const resolvedSubject = `Ticket #${ticket.number} resolved`;
+      const queued = await waitFor("reply and resolution notifications", 10_000, async () => {
+        const rows = await admin.query<{ subject: string; delivery_status: string; recipient_id: string }>(
+          `select subject, delivery_status, recipient_id from notifications
+           where tenant_id = $1 and ticket_id = $2 order by created_at`,
+          [tenantId, ticket.id],
+        );
+        return rows.rows.length >= 2 ? rows.rows : null;
+      });
+
+      const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) });
+      try {
+        await waitFor("reply and resolution notifications sent", 20_000, async () => {
+          const sent = await admin.query<{ count: number }>(
+            `select count(*)::int as count from notifications
+             where tenant_id = $1 and ticket_id = $2 and delivery_status = 'sent'`,
+            [tenantId, ticket.id],
+          );
+          return sent.rows[0]?.count === 2;
+        });
+      } finally {
+        await stopChild(worker);
+      }
+
+      return {
+        ticketNumber: ticket.number,
+        queued: queued.map((row) => ({
+          subject: row.subject,
+          deliveryStatus: row.delivery_status,
+          toRequester: row.recipient_id === ids.employee_id,
+        })),
+        replyArchived: (await mailpitForSubject(replySubject)).length,
+        resolvedArchived: (await mailpitForSubject(resolvedSubject)).length,
+        replySubject,
+        resolvedSubject,
+      };
+    } finally {
+      await stopChild(api);
+    }
+  });
+
   await scenario("suspended-tenant-skips-mail", async () => {
     const subject = "Audit suspended tenant";
     await admin.query("update tenants set status = 'suspended' where id = $1", [tenantId]);

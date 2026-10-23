@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import type { Role, Stage } from "@opspilot/core";
+import { renderTemplate, type Role, type Stage } from "@opspilot/core";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
 import { requestFeedback } from "./feedback.js";
@@ -80,6 +80,40 @@ const ticketListSelect = ticketSelect.replace(
   "select t.tenant_id,",
   "select count(*) over() as total_count, t.tenant_id,",
 );
+
+async function notifyFromTemplate(
+  client: pg.PoolClient,
+  tenantId: string,
+  eventId: string,
+  ticketId: string,
+  recipientId: string,
+  templateKey: string,
+  variables: Record<string, unknown>,
+): Promise<void> {
+  const template = await client.query<{ subject: string; body: string }>(
+    `select subject, body from notification_templates
+     where tenant_id = $1 and key = $2 and is_active`,
+    [tenantId, templateKey],
+  );
+  const row = template.rows[0];
+  if (!row) return;
+
+  await client.query(
+    `insert into notifications
+      (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, subject, body)
+     values ($1, $2, $3, $4, 'email', $5, 'pending', $6, $7)
+     on conflict (tenant_id, dedupe_key) do nothing`,
+    [
+      tenantId,
+      eventId,
+      ticketId,
+      recipientId,
+      `${eventId}:${templateKey}:${recipientId}`,
+      renderTemplate(row.subject, variables),
+      renderTemplate(row.body, variables),
+    ],
+  );
+}
 
 export async function loadTicket(
   client: pg.PoolClient,
@@ -684,6 +718,25 @@ export async function applyTransition(
   });
 
   if (
+    targetStatus.stage === "resolved" &&
+    ticket.status_stage !== "resolved" &&
+    ticket.status_stage !== "closed"
+  ) {
+    const summary = input.resolutionSummary ?? refreshed.resolution_summary ?? "";
+    const eventId = await enqueueEvent(client, tenantId, "ticket", ticketId, refreshed.version, "ticket.resolved", {
+      ticketId,
+      resolutionSummary: summary,
+    });
+    if (ticket.requester_id !== userId) {
+      await notifyFromTemplate(client, tenantId, eventId, ticketId, ticket.requester_id, "ticket_resolved", {
+        number: refreshed.number,
+        subject: refreshed.subject,
+        summary,
+      });
+    }
+  }
+
+  if (
     (targetStatus.stage === "resolved" || targetStatus.stage === "closed") &&
     ticket.status_stage !== "resolved" &&
     ticket.status_stage !== "closed"
@@ -843,6 +896,27 @@ export async function addComment(
     );
   }
 
+  const author = await client.query<{ display_name: string }>("select display_name from users where id = $1", [userId]);
+  const authorName = author.rows[0]?.display_name ?? "Unknown";
+
+  if (input.visibility === "public") {
+    const recipientId = role === "employee" ? ticket.assignee_id : ticket.requester_id;
+    if (recipientId && recipientId !== userId) {
+      const eventId = await enqueueEvent(client, tenantId, "ticket_comment", id, 1, "ticket.replied", {
+        ticketId,
+        commentId: id,
+        authorId: userId,
+        visibility: input.visibility,
+      });
+      await notifyFromTemplate(client, tenantId, eventId, ticketId, recipientId, "ticket_replied", {
+        number: ticket.number,
+        subject: ticket.subject,
+        authorName,
+        body: input.body,
+      });
+    }
+  }
+
   await writeAudit(
     client,
     tenantId,
@@ -855,12 +929,11 @@ export async function addComment(
     correlationId,
   );
 
-  const author = await client.query<{ display_name: string }>("select display_name from users where id = $1", [userId]);
   return {
     id,
     body: input.body,
     visibility: input.visibility,
-    authorName: author.rows[0]?.display_name ?? "Unknown",
+    authorName,
     createdAt: new Date(),
   };
 }
