@@ -751,26 +751,48 @@ async function main(): Promise<void> {
     const smtp = new ScriptedSmtp(async () => ({ code: 250, message: "2.0.0 queued but response withheld", withhold: true }));
     const port = await smtp.start();
     const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(port), WORKER_POLL_MS: "500" });
-    let snapshot: { first: EmailRow; second: EmailRow; attempts: number } | null = null;
+    const started = Date.now();
+    let after5s: { first: EmailRow; second: EmailRow; attempts: number } | null = null;
+    let afterTimeout: { first: EmailRow; second: EmailRow; attempts: number; elapsedMs: number } | null = null;
     try {
       await waitFor("server received DATA", 15_000, async () => smtp.attempts.length >= 1);
       await sleep(5000);
-      snapshot = { first: await emailRow(first.id), second: await emailRow(second.id), attempts: smtp.attempts.length };
+      after5s = { first: await emailRow(first.id), second: await emailRow(second.id), attempts: smtp.attempts.length };
+      await waitFor("worker to abandon withheld response", 45_000, async () => smtp.attempts.length >= 2);
+      await sleep(500);
+      afterTimeout = {
+        first: await emailRow(first.id),
+        second: await emailRow(second.id),
+        attempts: smtp.attempts.length,
+        elapsedMs: Date.now() - started,
+      };
     } finally {
       await stopChild(worker, "SIGKILL");
       await smtp.stop();
     }
     return {
       after5s: {
-        smtpAttempts: snapshot?.attempts,
-        firstStatus: snapshot?.first.delivery_status,
-        firstAttempts: snapshot?.first.attempts,
-        firstLockedUntil: snapshot?.first.locked_until,
-        secondStatus: snapshot?.second.delivery_status,
-        secondAttempts: snapshot?.second.attempts,
-        secondLockedUntil: snapshot?.second.locked_until,
+        smtpAttempts: after5s?.attempts,
+        firstStatus: after5s?.first.delivery_status,
+        firstAttempts: after5s?.first.attempts,
+        firstLockedUntil: after5s?.first.locked_until,
+        secondStatus: after5s?.second.delivery_status,
+        secondAttempts: after5s?.second.attempts,
+        secondLockedUntil: after5s?.second.locked_until,
       },
-      secondWasStarved: snapshot?.second.attempts === 0 && snapshot?.second.delivery_status === "pending",
+      afterTimeout: {
+        smtpAttempts: afterTimeout?.attempts,
+        firstStatus: afterTimeout?.first.delivery_status,
+        firstAttempts: afterTimeout?.first.attempts,
+        firstLastError: afterTimeout?.first.last_error,
+        firstLockedUntil: afterTimeout?.first.locked_until,
+        secondStatus: afterTimeout?.second.delivery_status,
+        secondAttempts: afterTimeout?.second.attempts,
+        secondLockedUntil: afterTimeout?.second.locked_until,
+        elapsedMs: afterTimeout?.elapsedMs,
+      },
+      secondWasStarvedAt5s: after5s?.second.attempts === 0 && after5s?.second.delivery_status === "pending",
+      recoveredAfterTimeout: (afterTimeout?.attempts ?? 0) >= 2,
       serverDialogue: smtp.attempts[0]?.dialogue,
     };
   });

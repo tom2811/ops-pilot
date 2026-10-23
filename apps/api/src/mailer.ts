@@ -21,6 +21,9 @@ export function createMailer(config: MailerConfig | null): Mailer | null {
     port: config.port,
     secure: config.secure,
     auth: config.user && config.pass ? { user: config.user, pass: config.pass } : undefined,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
   });
 
   return {
