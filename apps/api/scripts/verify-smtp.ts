@@ -16,6 +16,8 @@ const decoderPath = resolve(apiDir, "scripts/smtp-decoder.py");
 const artifactDir = resolve(repoRoot, "docs/audit/evidence");
 const appRole = "opspilot_app";
 const appPassword = "opspilot_app_pw";
+const workerRole = "opspilot_worker";
+const workerPassword = "opspilot_worker_pw";
 const python = process.env.PYTHON ?? "python3";
 
 type EmailRow = {
@@ -282,6 +284,9 @@ async function main(): Promise<void> {
   parsed.username = appRole;
   parsed.password = appPassword;
   const appUrl = parsed.toString();
+  const workerUrl = new URL(adminUrl);
+  workerUrl.username = workerRole;
+  workerUrl.password = workerPassword;
   const mailpitHttp = `http://${mailpit.getHost()}:${mailpit.getMappedPort(8025)}`;
   const mailpitPort = mailpit.getMappedPort(1025);
   const greenmailHttp = `http://${greenmail.getHost()}:${greenmail.getMappedPort(8080)}`;
@@ -293,7 +298,9 @@ async function main(): Promise<void> {
     APP_DATABASE_URL: appUrl,
     APP_DB_ROLE: appRole,
     APP_DB_PASSWORD: appPassword,
-    WORKER_DATABASE_URL: adminUrl,
+    WORKER_DATABASE_URL: workerUrl.toString(),
+    WORKER_DB_ROLE: workerRole,
+    WORKER_DB_PASSWORD: workerPassword,
     PUBLIC_API_URL: "http://127.0.0.1:4310/api",
     WEB_ORIGIN: "http://127.0.0.1:5173",
     SESSION_COOKIE_SECURE: "false",
@@ -411,7 +418,7 @@ async function main(): Promise<void> {
     await admin.query("delete from user_invitations where email = 'invitee-audit@acme.test'");
   };
 
-  const startWorker = (extra: NodeJS.ProcessEnv = {}, dbUrl = adminUrl): ChildProcess => {
+  const startWorker = (extra: NodeJS.ProcessEnv = {}, dbUrl = workerUrl.toString()): ChildProcess => {
     const child = spawn(process.execPath, ["--import", "tsx", "src/worker.ts"], {
       cwd: apiDir,
       env: { ...baseEnv, WORKER_DATABASE_URL: dbUrl, ...extra },
@@ -986,7 +993,7 @@ async function main(): Promise<void> {
     };
   });
 
-  await scenario("app-role-cannot-see-notifications", async () => {
+  await scenario("worker-requires-bypass-role", async () => {
     const email = await insertEmail({ subject: "Audit app role email", body: "app role email" });
     const notification = await insertNotification({ subject: "Audit app role notification", body: "app role notification" });
     const appClient = new pg.Client({ connectionString: appUrl });
@@ -1016,20 +1023,37 @@ async function main(): Promise<void> {
     } finally {
       await appClient.end();
     }
-    const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) }, appUrl);
+
+    const appWorker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) }, appUrl);
+    await waitFor("app-role worker rejected", 10_000, async () => appWorker.exitCode !== null);
+    const appWorkerLogs = workerLogs(appWorker).slice(-4);
+    await stopChild(appWorker);
+    const afterRejection = {
+      email: await emailRow(email.id),
+      notification: await notificationRow(notification.id),
+    };
+
+    const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(mailpitPort) });
     try {
-      await sleep(2000);
+      await waitFor("worker role email sent", 20_000, async () => (await emailRow(email.id)).delivery_status === "sent");
+      await waitFor("worker role notification sent", 20_000, async () => (await notificationRow(notification.id)).delivery_status === "sent");
     } finally {
       await stopChild(worker);
     }
+
     return {
       appRoleVisibility: scopedVisibility,
-      emailStatus: (await emailRow(email.id)).delivery_status,
-      appRoleWorkerSentEmail: (await emailRow(email.id)).delivery_status === "sent",
-      notificationDelivery: (await notificationRow(notification.id)).delivery_status,
-      notificationLegacyStatus: (await notificationRow(notification.id)).status,
-      notificationStillPending: (await notificationRow(notification.id)).delivery_status === "pending",
-      workerLogs: workerLogs(worker).slice(-6),
+      appRoleWorkerExitCode: appWorker.exitCode,
+      appRoleWorkerRejected: appWorker.exitCode !== null && appWorker.exitCode !== 0,
+      appRoleWorkerErrorMentionsRls: appWorkerLogs.some((entry) => entry.includes("cannot bypass RLS")),
+      appRoleWorkerLogs: appWorkerLogs,
+      emailPendingAfterAppRoleWorker: afterRejection.email.delivery_status === "pending",
+      notificationPendingAfterAppRoleWorker: afterRejection.notification.delivery_status === "pending",
+      workerRoleEmailStatus: (await emailRow(email.id)).delivery_status,
+      workerRoleNotificationDelivery: (await notificationRow(notification.id)).delivery_status,
+      workerRoleNotificationLegacyStatus: (await notificationRow(notification.id)).status,
+      workerRoleArchivedEmails: await archiveCount(email.subject),
+      workerRoleLogs: workerLogs(worker).slice(-6),
     };
   });
 

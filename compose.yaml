@@ -3,9 +3,11 @@ name: opspilot
 x-app-env: &app-env
   ADMIN_DATABASE_URL: postgres://postgres:opspilot@postgres:5432/opspilot
   APP_DATABASE_URL: postgres://opspilot_app:opspilot_app@postgres:5432/opspilot
-  WORKER_DATABASE_URL: postgres://postgres:opspilot@postgres:5432/opspilot
+  WORKER_DATABASE_URL: postgres://opspilot_worker:opspilot_worker@postgres:5432/opspilot
   APP_DB_ROLE: opspilot_app
   APP_DB_PASSWORD: opspilot_app
+  WORKER_DB_ROLE: opspilot_worker
+  WORKER_DB_PASSWORD: opspilot_worker
   PORT: "3000"
   WEB_ORIGIN: http://localhost:8080
   SESSION_COOKIE_SECURE: "false"

@@ -410,6 +410,20 @@ async function claimEmails(limit = 10): Promise<EmailRow[]> {
   return result.rows;
 }
 
+async function assertWorkerDatabaseRole(): Promise<string> {
+  const result = await pool.query<{ role: string; bypassrls: boolean; superuser: boolean }>(
+    `select current_user as role, rolbypassrls as bypassrls, rolsuper as superuser
+     from pg_roles where rolname = current_user`,
+  );
+  const row = result.rows[0];
+  if (!row || (!row.bypassrls && !row.superuser)) {
+    throw new Error(
+      `Worker database role ${row?.role ?? "(unknown)"} cannot bypass RLS; use a dedicated role with BYPASSRLS (WORKER_DB_ROLE) or an admin role`,
+    );
+  }
+  return row.role;
+}
+
 async function deferEmail(email: EmailRow): Promise<void> {
   await pool.query(
     `update email_messages
@@ -601,7 +615,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-log("worker_started", { pollMs: workerEnv.WORKER_POLL_MS, mailConfigured: Boolean(mailer) });
+const workerDbRole = await assertWorkerDatabaseRole();
+log("worker_started", { pollMs: workerEnv.WORKER_POLL_MS, mailConfigured: Boolean(mailer), dbRole: workerDbRole });
 await resumeDeferredMail();
 await loop();
 await pool.end();
