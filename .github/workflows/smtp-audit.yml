@@ -1,0 +1,27 @@
+name: SMTP delivery audit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify-smtp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify:smtp
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smtp-audit-evidence
+          path: docs/audit/evidence/latest.json
+          if-no-files-found: ignore

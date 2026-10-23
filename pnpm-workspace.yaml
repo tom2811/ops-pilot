@@ -4,3 +4,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

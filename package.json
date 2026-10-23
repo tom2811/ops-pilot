@@ -11,6 +11,7 @@
     "worker": "pnpm --filter @opspilot/api worker",
     "db:role": "pnpm --filter @opspilot/db role",
     "db:migrate": "pnpm --filter @opspilot/db migrate",
-    "db:seed": "pnpm --filter @opspilot/db seed"
+    "db:seed": "pnpm --filter @opspilot/db seed",
+    "verify:smtp": "pnpm --filter @opspilot/api verify:smtp"
   }
 }
