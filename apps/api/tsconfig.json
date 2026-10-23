@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/verify-smtp.ts", "scripts/smtp-invariants.ts"]
+  "include": ["src/**/*.ts", "scripts/verify-smtp.ts", "scripts/smtp-invariants.ts", "test/**/*.ts"]
 }
