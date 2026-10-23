@@ -108,6 +108,11 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function permanentSmtpResponseCode(error: unknown): number | null {
+  const responseCode = Number((error as { responseCode?: unknown } | null)?.responseCode);
+  return Number.isFinite(responseCode) && responseCode >= 500 && responseCode < 600 ? responseCode : null;
+}
+
 function log(event: string, details: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ level: "info", event, ...details, at: new Date().toISOString() }));
 }
@@ -359,30 +364,34 @@ async function processNotifications(): Promise<void> {
       await pool.query(
         `update notifications
          set delivery_status = 'sent', status = 'sent', sent_at = now(), attempts = $2,
-             provider_message_id = $3, last_error = null, locked_until = null
+             provider_message_id = $3, last_error = null, bounce_reason = null, locked_until = null
          where id = $1`,
         [notification.id, attempts, messageId ?? null],
       );
       log("notification_sent", { notificationId: notification.id });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const dead = attempts >= 5;
+      const permanentCode = permanentSmtpResponseCode(error);
+      const dead = permanentCode !== null || attempts >= 5;
+      const lastError = (permanentCode === null ? message : `SMTP ${permanentCode}: ${message}`).slice(0, 2000);
       await pool.query(
         `update notifications
-         set delivery_status = $2, status = $2::notification_status,
+         set delivery_status = ($2::notification_status)::text, status = $2::notification_status,
              attempts = $3,
              next_attempt_at = case when $2 = 'pending' then now() + ($4::text || ' seconds')::interval
                                     else next_attempt_at end,
              last_error = $5,
+             bounce_reason = case when $6::boolean then $5 else bounce_reason end,
              locked_until = null
          where id = $1`,
-        [notification.id, dead ? "failed" : "pending", attempts, String(Math.min(60, 2 ** attempts)), message.slice(0, 2000)],
+        [notification.id, dead ? "failed" : "pending", attempts, String(Math.min(60, 2 ** attempts)), lastError, permanentCode !== null],
       );
       log("notification_failed", {
         notificationId: notification.id,
         attempts,
         dead,
-        error: message,
+        permanent: permanentCode !== null,
+        error: lastError,
       });
     }
   }
@@ -469,21 +478,25 @@ async function processEmails(): Promise<void> {
       await pool.query(
         `update email_messages
          set delivery_status = 'sent', sent_at = now(), attempts = $2,
-             provider_message_id = $3, last_error = null, locked_until = null,
-             body = $4
+             provider_message_id = $3, last_error = null, bounce_reason = null,
+             locked_until = null, body = $4
          where id = $1`,
         [email.id, attempts, messageId ?? null, REDACTED_BODY],
       );
       log("email_sent", { emailId: email.id });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const dead = attempts >= 5;
+      const permanentCode = permanentSmtpResponseCode(error);
+      const dead = permanentCode !== null || attempts >= 5;
+      const lastError = (permanentCode === null ? message : `SMTP ${permanentCode}: ${message}`).slice(0, 2000);
       await pool.query(
         `update email_messages
          set delivery_status = $2, attempts = $3,
              next_attempt_at = case when $2 = 'pending' then now() + ($4::text || ' seconds')::interval
                                     else next_attempt_at end,
-             last_error = $5, locked_until = null,
+             last_error = $5,
+             bounce_reason = case when $7::boolean then $5 else bounce_reason end,
+             locked_until = null,
              body = case when $2 = 'failed' then $6 else body end
          where id = $1`,
         [
@@ -491,11 +504,12 @@ async function processEmails(): Promise<void> {
           dead ? "failed" : "pending",
           attempts,
           String(Math.min(60, 2 ** attempts)),
-          message.slice(0, 2000),
+          lastError,
           REDACTED_BODY,
+          permanentCode !== null,
         ],
       );
-      log("email_failed", { emailId: email.id, attempts, dead, error: message });
+      log("email_failed", { emailId: email.id, attempts, dead, permanent: permanentCode !== null, error: lastError });
     }
   }
 }

@@ -30,6 +30,7 @@ type EmailRow = {
   attempts: number;
   next_attempt_at: string;
   last_error: string | null;
+  bounce_reason: string | null;
   provider_message_id: string | null;
   locked_until: string | null;
   sent_at: string | null;
@@ -41,6 +42,7 @@ type NotificationRow = {
   status: string;
   attempts: number;
   last_error: string | null;
+  bounce_reason: string | null;
   sent_at: string | null;
   subject: string;
   body: string;
@@ -402,7 +404,7 @@ async function main(): Promise<void> {
 
   const notificationRow = async (id: string): Promise<NotificationRow> => {
     const row = await admin.query<NotificationRow>(
-      "select id, delivery_status, status, attempts, last_error, sent_at, subject, body from notifications where id = $1",
+      "select id, delivery_status, status, attempts, last_error, bounce_reason, sent_at, subject, body from notifications where id = $1",
       [id],
     );
     const value = row.rows[0];
@@ -766,23 +768,49 @@ async function main(): Promise<void> {
     };
   });
 
-  await scenario("permanent-550", async () => {
+  await scenario("permanent-550-immediate-failure", async () => {
     const subject = "Audit 550 permanent";
-    const row = await insertEmail({ subject, body: "550 body", attempts: 4 });
+    const email = await insertEmail({ subject, body: "550 body", attempts: 0 });
+    const notification = await insertNotification({
+      subject: "Audit 550 permanent notification",
+      body: "550 notification body",
+    });
     const smtp = new ScriptedSmtp(async () => ({ code: 550, message: "5.1.1 no such user" }));
     const port = await smtp.start();
     const worker = startWorker({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(port) });
     try {
-      await waitFor("550 row failed", 20_000, async () => (await emailRow(row.id)).delivery_status === "failed");
+      await waitFor("550 email failed immediately", 20_000, async () => {
+        const row = await emailRow(email.id);
+        return row.delivery_status === "failed" && row.bounce_reason !== null;
+      });
+      await waitFor("550 notification failed immediately", 20_000, async () => {
+        const row = await notificationRow(notification.id);
+        return row.delivery_status === "failed" && row.bounce_reason !== null;
+      });
     } finally {
       await stopChild(worker);
       await smtp.stop();
     }
+    const emailAfter = await emailRow(email.id);
+    const notificationAfter = await notificationRow(notification.id);
     return {
       smtpAttempts: smtp.attempts.length,
       smtpRejected: smtp.rejected.length,
       archivedEmails: await archiveCount(subject),
-      row: await emailRow(row.id),
+      email: {
+        deliveryStatus: emailAfter.delivery_status,
+        attempts: emailAfter.attempts,
+        bounceReason: emailAfter.bounce_reason,
+        lastError: emailAfter.last_error,
+        bodyRedacted: emailAfter.body === "[body redacted]",
+      },
+      notification: {
+        deliveryStatus: notificationAfter.delivery_status,
+        legacyStatus: notificationAfter.status,
+        attempts: notificationAfter.attempts,
+        bounceReason: notificationAfter.bounce_reason,
+        lastError: notificationAfter.last_error,
+      },
       dialogue: smtp.attempts[0]?.dialogue,
     };
   });
