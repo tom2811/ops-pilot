@@ -1003,6 +1003,20 @@ export async function ticketDetail(
     [tenantId, ticketId],
   );
 
+  const updates = await client.query<{
+    created_at: Date;
+    actor_role: string;
+    actor_name: string | null;
+  }>(
+    `select a.created_at, a.actor_role, u.display_name as actor_name
+     from audit_log a
+     left join users u on u.id = a.actor_id
+     where a.tenant_id = $1 and a.entity_type = 'ticket' and a.entity_id = $2
+       and a.action = 'ticket.updated'
+     order by a.created_at`,
+    [tenantId, ticketId],
+  );
+
   const transitions = await allowedTransitions(client, tenantId, ticket.status_id, role);
   const customFields = await visibleCustomFields(client, tenantId, ticket.category_id, ticket.custom_fields, role);
   const attachments = await client.query<{
@@ -1029,6 +1043,7 @@ export async function ticketDetail(
     comments: comments.rows,
     history: history.rows,
     assignments: assignments.rows,
+    updates: updates.rows,
     attachments: attachments.rows,
     allowed_transitions: transitions,
   };

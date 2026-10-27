@@ -957,6 +957,10 @@ dd {
   background: #7f56d9;
 }
 
+.timeline-dot.audit {
+  background: #12b76a;
+}
+
 .timeline strong {
   font-size: 0.86rem;
 }

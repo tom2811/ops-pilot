@@ -39,7 +39,9 @@ export function FeedbackPage() {
       })
       .catch((caught) => {
         if (!cancelled) {
-          setError(caught instanceof ApiError && caught.status === 410 ? "This feedback link has expired." : errorMessage(caught));
+          const invalidLink =
+            caught instanceof ApiError && [400, 404, 410].includes(caught.status);
+          setError(invalidLink ? "This feedback link is invalid or has expired." : errorMessage(caught));
         }
       })
       .finally(() => {

@@ -25,7 +25,7 @@ type TimelineEvent = {
   title: string;
   detail?: string;
   actor?: string;
-  kind: "status" | "assignment";
+  kind: "status" | "assignment" | "audit";
 };
 
 export function TicketDetailPage() {
@@ -137,6 +137,12 @@ export function TicketDetailPage() {
       actor: event.actor_name ?? humanize(event.actor_role),
       kind: "assignment" as const,
     })),
+    ...detail.updates.map((event) => ({
+      time: event.created_at,
+      title: "Ticket details updated",
+      actor: event.actor_name ?? humanize(event.actor_role),
+      kind: "audit" as const,
+    })),
   ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
   async function reload(message?: string): Promise<void> {
@@ -147,6 +153,18 @@ export function TicketDetailPage() {
   async function submitTransition(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (!transition) return;
+    if (transition.requiresAssignee && !detail?.assignee_id) {
+      setError("Assign the ticket first");
+      return;
+    }
+    if (needsSummary && !summary.trim()) {
+      setError("Resolution summary is required");
+      return;
+    }
+    if (needsReason && !reason.trim()) {
+      setError("Reason is required");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -242,7 +260,7 @@ export function TicketDetailPage() {
     setError(null);
     try {
       await del(`/t/${tenantSlug}/tickets/${ticketId}`);
-      navigate(`/t/${tenantSlug}/tickets`);
+      navigate(`/t/${tenantSlug}/tickets`, { replace: true });
     } catch (caught) {
       setError(errorMessage(caught));
       setBusy(false);
@@ -684,13 +702,13 @@ export function TicketDetailPage() {
                 {needsReason && (
                   <label>
                     Reason
-                    <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} required />
+                    <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} />
                   </label>
                 )}
                 {needsSummary && (
                   <label>
                     Resolution summary
-                    <textarea rows={3} value={summary} onChange={(event) => setSummary(event.target.value)} required />
+                    <textarea rows={3} value={summary} onChange={(event) => setSummary(event.target.value)} />
                   </label>
                 )}
                 {transition && transition.requiresAssignee && !detail.assignee_id && (

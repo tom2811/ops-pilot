@@ -126,6 +126,15 @@ export function UsersPage() {
       setNotice(`${user.name} updated.`);
       setRefresh((value) => value + 1);
     } catch (caught) {
+      setDrafts((current) => ({
+        ...current,
+        [user.id]: {
+          role: user.role,
+          isActive: user.is_active,
+          teamIds: user.team_ids,
+          customRoleId: user.custom_role_id,
+        },
+      }));
       setError(errorMessage(caught));
     } finally {
       setBusy(false);

@@ -151,14 +151,14 @@ export function AuditLogPage() {
               setAction(event.target.value);
               setPage(1);
             }}
-            aria-label="Action prefix"
+            aria-label="Action group"
           >
-            <option value="">All actions</option>
-            <option value="ticket">Tickets</option>
-            <option value="config">Configuration</option>
-            <option value="user">People</option>
-            <option value="role">Roles</option>
-            <option value="platform">Platform</option>
+            <option value="">All action groups</option>
+            <option value="ticket">Ticket actions</option>
+            <option value="config">Configuration actions</option>
+            <option value="user">People actions</option>
+            <option value="role">Role actions</option>
+            <option value="platform">Platform actions</option>
           </select>
         </div>
 

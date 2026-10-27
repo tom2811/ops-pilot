@@ -327,6 +327,37 @@ describe("role permissions", () => {
   });
 });
 
+describe("configuration validation", () => {
+  it("names the colliding priority rank or key", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const duplicateRank = await inject(adminCookie, {
+      method: "POST",
+      url: "/api/t/acme/priorities",
+      payload: {
+        key: `rank-${Date.now()}`,
+        label: "Rank collision",
+        rank: 1,
+        color: "red",
+      },
+    });
+    expect(duplicateRank.statusCode).toBe(409);
+    expect(duplicateRank.json().error).toBe("That priority rank is already in use");
+
+    const duplicateKey = await inject(adminCookie, {
+      method: "POST",
+      url: "/api/t/acme/priorities",
+      payload: {
+        key: "p1",
+        label: "Key collision",
+        rank: 999,
+        color: "red",
+      },
+    });
+    expect(duplicateKey.statusCode).toBe(409);
+    expect(duplicateKey.json().error).toBe("That priority key is already in use");
+  });
+});
+
 describe("ticket lifecycle and CSAT", () => {
   it("creates, updates with optimistic concurrency, resolves, and collects feedback", async () => {
     const employee = await login("employee@acme.test");
@@ -363,6 +394,14 @@ describe("ticket lifecycle and CSAT", () => {
     });
     expect(updated.statusCode, updated.body).toBe(200);
     expect(updated.json().version).toBe(ticket.version + 1);
+
+    const detail = await inject(employee, { method: "GET", url: `/api/t/acme/tickets/${ticket.id}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actor_role: "employee", actor_name: expect.any(String) }),
+      ]),
+    );
 
     const comment = await inject(employee, {
       method: "POST",
@@ -439,6 +478,15 @@ describe("ticket lifecycle and CSAT", () => {
     });
     expect(audit.statusCode, audit.body).toBe(200);
     expect(audit.json().items.some((item: { entity_id: string }) => item.entity_id === ticket.id)).toBe(true);
+  });
+
+  it("rejects malformed and unknown feedback links", async () => {
+    const malformed = await app.inject({ method: "GET", url: "/api/feedback/short" });
+    expect(malformed.statusCode).toBe(400);
+
+    const unknown = await app.inject({ method: "GET", url: "/api/feedback/aaaaaaaaaaaaaaaaaaaa" });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json().error).toBe("Feedback link not found");
   });
 
   it("rejects a category from another tenant", async () => {

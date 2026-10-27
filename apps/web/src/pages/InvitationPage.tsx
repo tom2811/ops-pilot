@@ -39,7 +39,7 @@ export function InvitationPage() {
         displayName: info?.existingUser ? undefined : displayName,
         password,
       });
-      window.location.assign(info ? `/${info.tenantSlug}/tickets` : "/");
+      window.location.assign(info ? `/t/${info.tenantSlug}/tickets` : "/");
     } catch (caught) {
       setError(errorMessage(caught));
       setBusy(false);

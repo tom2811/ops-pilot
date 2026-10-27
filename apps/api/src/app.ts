@@ -62,8 +62,16 @@ export async function buildApp() {
     if (error instanceof ZodError) {
       return reply.status(400).send({ error: "Validation failed", issues: error.issues });
     }
-    const shaped = error as { code?: string; statusCode?: number; message?: string };
-    if (shaped.code === "23505") return reply.status(409).send({ error: "That value already exists" });
+    const shaped = error as { code?: string; constraint?: string; statusCode?: number; message?: string };
+    if (shaped.code === "23505") {
+      if (shaped.constraint === "priorities_tenant_id_rank_key") {
+        return reply.status(409).send({ error: "That priority rank is already in use" });
+      }
+      if (shaped.constraint === "priorities_tenant_id_key_key") {
+        return reply.status(409).send({ error: "That priority key is already in use" });
+      }
+      return reply.status(409).send({ error: "That value already exists" });
+    }
     if (shaped.code === "23503") return reply.status(400).send({ error: "Related record not found" });
     if (shaped.code === "FST_REQ_FILE_TOO_LARGE") {
       return reply.status(413).send({ error: "File is larger than 10 MB" });

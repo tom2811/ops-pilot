@@ -156,6 +156,12 @@ export type AssignmentHistory = {
   to_team_name: string | null;
 };
 
+export type TicketUpdate = {
+  created_at: string;
+  actor_role: string;
+  actor_name: string | null;
+};
+
 export type Transition = {
   toStatusId: string;
   key: string;
@@ -180,6 +186,7 @@ export type TicketDetail = Ticket & {
   comments: TicketComment[];
   history: StatusHistory[];
   assignments: AssignmentHistory[];
+  updates: TicketUpdate[];
   attachments: Attachment[];
   allowed_transitions: Transition[];
 };
