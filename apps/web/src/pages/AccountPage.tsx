@@ -3,16 +3,17 @@ import { Link, Navigate } from "react-router-dom";
 import { api, del, errorMessage, formatDate, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { useToast } from "../ui.js";
 import type { SessionInfo } from "../types.js";
 
 export function AccountPage() {
   const { user, loading } = useAuth();
+  const toast = useToast();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(true);
 
@@ -41,12 +42,11 @@ export function AccountPage() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await post("/auth/password/change", { currentPassword, newPassword });
       setCurrentPassword("");
       setNewPassword("");
-      setNotice("Password changed. Other sessions were signed out.");
+      toast.success("Password changed", "Other sessions were signed out.");
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -61,7 +61,7 @@ export function AccountPage() {
     try {
       await del(`/auth/sessions/${id}`);
       setSessions((current) => current.filter((session) => session.id !== id));
-      setNotice("Session signed out.");
+      toast.success("Session signed out.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -74,7 +74,7 @@ export function AccountPage() {
     setError(null);
     try {
       await del("/auth/sessions");
-      setNotice("Other sessions signed out.");
+      toast.success("Other sessions signed out.");
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -91,7 +91,6 @@ export function AccountPage() {
         </p>
       </PageHeader>
       <ErrorAlert message={error} />
-      {notice && <div className="callout success">{notice}</div>}
 
       <div className="admin-grid">
         <section className="card">

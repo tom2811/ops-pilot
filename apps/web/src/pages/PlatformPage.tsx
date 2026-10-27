@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, errorMessage, formatDate, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { useToast } from "../ui.js";
 import type { PlatformTenant } from "../types.js";
 
 function slugify(value: string): string {
@@ -14,14 +15,14 @@ function slugify(value: string): string {
 }
 
 export function PlatformPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
+  const toast = useToast();
   const [tenants, setTenants] = useState<PlatformTenant[]>([]);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [loadingTenants, setLoadingTenants] = useState(true);
@@ -71,7 +72,6 @@ export function PlatformPage() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setNotice(null);
     setInviteLink(null);
     try {
       const result = await post<{ invitationLink: string }>("/platform/tenants", {
@@ -80,7 +80,7 @@ export function PlatformPage() {
         adminEmail,
       });
       setInviteLink(result.invitationLink);
-      setNotice("Workspace created. Share the administrator invitation link.");
+      toast.success("Workspace created", "Share the administrator invitation link.");
       setName("");
       setSlug("");
       setAdminEmail("");
@@ -95,11 +95,10 @@ export function PlatformPage() {
   async function toggleStatus(tenant: PlatformTenant): Promise<void> {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const status = tenant.status === "active" ? "suspended" : "active";
       await patch(`/platform/tenants/${tenant.id}`, { status });
-      setNotice(`${tenant.name} ${status === "active" ? "reactivated" : "suspended"}.`);
+      toast.success(`${tenant.name} ${status === "active" ? "reactivated" : "suspended"}.`);
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -110,22 +109,10 @@ export function PlatformPage() {
 
   return (
     <div className="account-page">
-      <div className="platform-topbar">
-        <div>
-          <span className="brand-mark small">OP</span>
-          <strong>OpsPilot Platform</strong>
-        </div>
-        <nav>
-          <Link to="/account">Account</Link>
-          <button className="button ghost small" onClick={() => void logout()}>Sign out</button>
-        </nav>
-      </div>
-
       <PageHeader eyebrow="Platform" title="Workspaces">
         <p className="muted">Onboard tenants, provision defaults, and suspend access.</p>
       </PageHeader>
       <ErrorAlert message={error} />
-      {notice && <div className="callout success">{notice}</div>}
       {inviteLink && (
         <div className="callout warning">
           <strong>Administrator invitation</strong>
@@ -134,7 +121,7 @@ export function PlatformPage() {
             className="button secondary small"
             onClick={() => {
               void navigator.clipboard.writeText(inviteLink);
-              setNotice("Invitation link copied.");
+              toast.info("Invitation link copied.");
             }}
           >
             Copy link
@@ -202,10 +189,10 @@ export function PlatformPage() {
       <section className="card" style={{ marginTop: "1.25rem" }}>
         <div className="section-heading"><h2>All workspaces</h2></div>
         <div className="table-wrap">
-          <table>
+          <table className="platform-table">
             <thead>
               <tr>
-                <th>Workspace</th><th>Status</th><th>People</th><th>Tickets</th><th>Invites</th><th>Created</th><th />
+                <th>Workspace</th><th>Status</th><th className="col-people">People</th><th className="col-tickets">Tickets</th><th className="col-invites">Invites</th><th className="col-created">Created</th><th />
               </tr>
             </thead>
             <tbody>
@@ -216,10 +203,10 @@ export function PlatformPage() {
                     <div className="muted small">/{tenant.slug}</div>
                   </td>
                   <td><span className={`badge status-${tenant.status === "active" ? "open" : "closed"}`}>{tenant.status}</span></td>
-                  <td>{tenant.member_count}</td>
-                  <td>{tenant.ticket_count}</td>
-                  <td>{tenant.pending_invitations}</td>
-                  <td className="muted small">{formatDate(tenant.created_at)}</td>
+                  <td className="col-people">{tenant.member_count}</td>
+                  <td className="col-tickets">{tenant.ticket_count}</td>
+                  <td className="col-invites">{tenant.pending_invitations}</td>
+                  <td className="col-created muted small">{formatDate(tenant.created_at)}</td>
                   <td>
                     <button className="button ghost small" disabled={busy} onClick={() => void toggleStatus(tenant)}>
                       {tenant.status === "active" ? "Suspend" : "Reactivate"}

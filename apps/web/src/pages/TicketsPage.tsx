@@ -4,6 +4,7 @@ import { formatTicketNumber } from "@opspilot/core";
 import { api, errorMessage, formatDate, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
+import { Select, useToast } from "../ui.js";
 import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
@@ -72,14 +73,16 @@ export function CustomFieldInput({
       {field.type === "textarea" ? (
         <textarea id={id} rows={3} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
       ) : field.type === "select" ? (
-        <select id={id} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
-          <option value="">Select…</option>
-          {field.options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+        <Select
+          ariaLabel={field.label}
+          value={String(value ?? "")}
+          onChange={onChange}
+          placeholder="Select…"
+          options={[
+            { value: "", label: "Select…" },
+            ...field.options.map((option) => ({ value: option, label: option })),
+          ]}
+        />
       ) : (
         <input
           id={id}
@@ -191,35 +194,27 @@ function CreateTicketForm({
         </label>
         <label>
           Category
-          <select
+          <Select
+            ariaLabel="Category"
             value={categoryId}
-            onChange={(event) => {
-              setCategoryId(event.target.value);
+            onChange={(next) => {
+              setCategoryId(next);
               setRoute(null);
             }}
-          >
-            {config.categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
+            options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+          />
         </label>
         <label>
           Priority
-          <select
+          <Select
+            ariaLabel="Priority"
             value={priorityId}
-            onChange={(event) => {
-              setPriorityId(event.target.value);
+            onChange={(next) => {
+              setPriorityId(next);
               setRoute(null);
             }}
-          >
-            {config.priorities.map((priority) => (
-              <option key={priority.id} value={priority.id}>
-                {priority.label}
-              </option>
-            ))}
-          </select>
+            options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
+          />
         </label>
         {fields.map((field) => (
           <CustomFieldInput
@@ -253,6 +248,7 @@ export function TicketsPage() {
   const { tenantSlug = "" } = useParams();
   const { memberships } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
   const role = memberships.find((item) => item.slug === tenantSlug)?.role ?? "employee";
 
   const [config, setConfig] = useState<Config | null>(null);
@@ -327,14 +323,17 @@ export function TicketsPage() {
         <CreateTicketForm
           tenantSlug={tenantSlug}
           config={config}
-          onCreated={(ticket) => navigate(`/t/${tenantSlug}/tickets/${ticket.id}`)}
+          onCreated={(ticket) => {
+            toast.success("Ticket opened", formatTicketNumber(prefix, ticket.number));
+            navigate(`/t/${tenantSlug}/tickets/${ticket.id}`);
+          }}
         />
       )}
 
       <section className="card">
         <div className="filter-bar">
           <input
-            placeholder="Search subject and description"
+            placeholder="Search tickets"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
@@ -344,34 +343,30 @@ export function TicketsPage() {
               }
             }}
           />
-          <select
+          <Select
+            ariaLabel="Filter by status"
             value={status}
-            onChange={(event) => {
-              setStatus(event.target.value);
+            onChange={(next) => {
+              setStatus(next);
               setPage(1);
             }}
-          >
-            <option value="">All statuses</option>
-            {config?.statuses.map((item) => (
-              <option key={item.id} value={item.key}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <select
+            options={[
+              { value: "", label: "All statuses" },
+              ...(config?.statuses.map((item) => ({ value: item.key, label: item.label })) ?? []),
+            ]}
+          />
+          <Select
+            ariaLabel="Filter by priority"
             value={priority}
-            onChange={(event) => {
-              setPriority(event.target.value);
+            onChange={(next) => {
+              setPriority(next);
               setPage(1);
             }}
-          >
-            <option value="">All priorities</option>
-            {config?.priorities.map((item) => (
-              <option key={item.id} value={item.key}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "All priorities" },
+              ...(config?.priorities.map((item) => ({ value: item.key, label: item.label })) ?? []),
+            ]}
+          />
           <button
             className="button secondary"
             onClick={() => {
@@ -410,12 +405,12 @@ export function TicketsPage() {
                 <tr>
                   <th>Ticket</th>
                   <th>Subject</th>
-                  <th>Status</th>
-                  <th>Priority</th>
-                  <th>Requester</th>
-                  <th>Owner</th>
-                  <th>SLA</th>
-                  <th>Updated</th>
+                  <th className="col-status">Status</th>
+                  <th className="col-priority">Priority</th>
+                  <th className="col-requester">Requester</th>
+                  <th className="col-owner">Owner</th>
+                  <th className="col-sla">SLA</th>
+                  <th className="col-updated">Updated</th>
                 </tr>
               </thead>
               <tbody>
@@ -440,15 +435,15 @@ export function TicketsPage() {
                           {ticket.team_name ? ` · ${ticket.team_name}` : ""}
                         </div>
                       </td>
-                      <td>
+                      <td className="col-status">
                         <StatusBadge label={ticket.status_label} stage={ticket.status_stage} />
                       </td>
-                      <td>
+                      <td className="col-priority">
                         <PriorityBadge label={priorityMeta?.label ?? ticket.priority_label} color={priorityMeta?.color} />
                       </td>
-                      <td>{ticket.requester_name}</td>
-                      <td>{ticket.assignee_name ?? "Unassigned"}</td>
-                      <td className="nowrap">
+                      <td className="col-requester">{ticket.requester_name}</td>
+                      <td className="col-owner">{ticket.assignee_name ?? "Unassigned"}</td>
+                      <td className="col-sla nowrap">
                         {slaBreached ? (
                           <SlaBadge label="Breached" state="breached" />
                         ) : slaPaused ? (
@@ -459,10 +454,10 @@ export function TicketsPage() {
                             state={new Date(slaDue).getTime() < Date.now() ? "overdue" : "active"}
                           />
                         ) : (
-                          <span className="muted small">—</span>
+                          <span className="muted small">–</span>
                         )}
                       </td>
-                      <td className="nowrap muted">{formatDate(ticket.updated_at)}</td>
+                      <td className="col-updated nowrap muted">{formatDate(ticket.updated_at)}</td>
                     </tr>
                   );
                 })}

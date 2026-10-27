@@ -4,6 +4,7 @@ import { PERMISSION_KEYS, type Permission } from "@opspilot/core";
 import { api, del, errorMessage, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, RoleBadge, Spinner } from "../components.js";
+import { Select, useConfirm, useToast } from "../ui.js";
 import type {
   Config,
   CustomRole,
@@ -33,6 +34,8 @@ export function UsersPage() {
   const { memberships } = useAuth();
   const membership = memberships.find((item) => item.slug === tenantSlug);
   const canManage = membership?.permissions.includes("users.manage") ?? false;
+  const confirm = useConfirm();
+  const toast = useToast();
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
   const [roles, setRoles] = useState<CustomRole[]>([]);
@@ -41,7 +44,6 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
 
   const [inviteEmail, setInviteEmail] = useState("");
@@ -115,7 +117,6 @@ export function UsersPage() {
     if (!draft) return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await patch(`/t/${tenantSlug}/users/${user.id}`, {
         role: draft.role,
@@ -123,7 +124,7 @@ export function UsersPage() {
         teamIds: draft.teamIds,
         customRoleId: draft.customRoleId,
       });
-      setNotice(`${user.name} updated.`);
+      toast.success(`${user.name} updated.`);
       setRefresh((value) => value + 1);
     } catch (caught) {
       setDrafts((current) => ({
@@ -145,7 +146,6 @@ export function UsersPage() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setNotice(null);
     setInviteLink(null);
     try {
       const result = await post<{ link: string }>(`/t/${tenantSlug}/invitations`, {
@@ -156,7 +156,7 @@ export function UsersPage() {
       setInviteLink(result.link);
       setInviteEmail("");
       setInviteTeams([]);
-      setNotice("Invitation created. Copy the link below and share it securely.");
+      toast.success("Invitation created", "Copy the link below and share it securely.");
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -170,7 +170,7 @@ export function UsersPage() {
     setError(null);
     try {
       await del(`/t/${tenantSlug}/invitations/${id}`);
-      setNotice("Invitation revoked.");
+      toast.success("Invitation revoked.");
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -199,7 +199,6 @@ export function UsersPage() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    setNotice(null);
     const body = { name: roleName, baseRole: roleBase, permissions: rolePermissions };
     try {
       if (editingRoleId) {
@@ -207,7 +206,7 @@ export function UsersPage() {
       } else {
         await post(`/t/${tenantSlug}/custom-roles`, body);
       }
-      setNotice(editingRoleId ? "Role updated." : "Role created.");
+      toast.success(editingRoleId ? "Role updated." : "Role created.");
       resetRoleForm();
       setRefresh((value) => value + 1);
     } catch (caught) {
@@ -218,12 +217,18 @@ export function UsersPage() {
   }
 
   async function deleteRole(role: CustomRole): Promise<void> {
-    if (!window.confirm(`Delete the "${role.name}" role? Members will fall back to their base role.`)) return;
+    const confirmed = await confirm({
+      title: `Delete the "${role.name}" role?`,
+      body: "Members will fall back to their base role.",
+      confirmLabel: "Delete role",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setBusy(true);
     setError(null);
     try {
       await del(`/t/${tenantSlug}/custom-roles/${role.id}`);
-      setNotice("Role deleted.");
+      toast.success("Role deleted.");
       if (editingRoleId === role.id) resetRoleForm();
       setRefresh((value) => value + 1);
     } catch (caught) {
@@ -249,7 +254,6 @@ export function UsersPage() {
         <p className="muted">Invite teammates, assign teams, and build custom permission sets.</p>
       </PageHeader>
       <ErrorAlert message={error} />
-      {notice && <div className="callout success">{notice}</div>}
       {inviteLink && (
         <div className="callout warning">
           <strong>Invitation link</strong>
@@ -258,7 +262,7 @@ export function UsersPage() {
             className="button secondary small"
             onClick={() => {
               void navigator.clipboard.writeText(inviteLink);
-              setNotice("Invitation link copied.");
+              toast.info("Invitation link copied.");
             }}
           >
             Copy link
@@ -281,11 +285,12 @@ export function UsersPage() {
             </label>
             <label>
               Base role
-              <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Role)}>
-                {ROLES.map((item) => (
-                  <option key={item} value={item}>{humanize(item)}</option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Base role"
+                value={inviteRole}
+                onChange={(next) => setInviteRole(next as Role)}
+                options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
+              />
             </label>
             {teams.length > 0 && (
               <fieldset className="field-group">
@@ -318,7 +323,7 @@ export function UsersPage() {
             <EmptyState title="No pending invitations">New invitations will appear here.</EmptyState>
           ) : (
             <div className="table-wrap">
-              <table>
+              <table className="compact">
                 <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th /></tr></thead>
                 <tbody>
                   {invitations.map((invitation) => (
@@ -355,11 +360,12 @@ export function UsersPage() {
             </label>
             <label>
               Base role
-              <select value={roleBase} onChange={(event) => setRoleBase(event.target.value as Role)}>
-                {ROLES.map((item) => (
-                  <option key={item} value={item}>{humanize(item)}</option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Base role"
+                value={roleBase}
+                onChange={(next) => setRoleBase(next as Role)}
+                options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
+              />
             </label>
             <fieldset className="field-group">
               <legend>Permissions</legend>
@@ -440,10 +446,10 @@ export function UsersPage() {
                       <div className="muted small">{user.email}</div>
                     </td>
                     <td>
-                      <select
+                      <Select
+                        ariaLabel={`Role for ${user.name}`}
                         value={roleValue}
-                        onChange={(event) => {
-                          const value = event.target.value;
+                        onChange={(value) => {
                           if (value.startsWith("custom:")) {
                             const role = roles.find((item) => item.id === value.slice(7));
                             if (role) {
@@ -456,22 +462,19 @@ export function UsersPage() {
                             });
                           }
                         }}
-                      >
-                        <optgroup label="Built-in roles">
-                          {ROLES.map((item) => (
-                            <option key={item} value={`builtin:${item}`}>{humanize(item)}</option>
-                          ))}
-                        </optgroup>
-                        {roles.length > 0 && (
-                          <optgroup label="Custom roles">
-                            {roles.map((item) => (
-                              <option key={item.id} value={`custom:${item.id}`}>
-                                {item.name} ({humanize(item.base_role)})
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </select>
+                        options={[
+                          ...ROLES.map((item) => ({
+                            value: `builtin:${item}`,
+                            label: humanize(item),
+                            group: "Built-in roles",
+                          })),
+                          ...roles.map((item) => ({
+                            value: `custom:${item.id}`,
+                            label: `${item.name} (${humanize(item.base_role)})`,
+                            group: "Custom roles",
+                          })),
+                        ]}
+                      />
                     </td>
                     <td>
                       <div className="team-checks">

@@ -94,7 +94,7 @@ export function FeedbackPage() {
               {info ? `Ticket #${info.ticketNumber} · ${info.ticketSubject}` : "Your rating has been recorded."}
             </p>
             <div className="csat-score">
-              <strong>{rating || info?.rating || "—"}</strong>
+              <strong>{rating || info?.rating || "–"}</strong>
               <span className="stars" aria-hidden="true">
                 {"★".repeat(rating || info?.rating || 0)}
                 <span className="stars-empty">{"★".repeat(5 - (rating || info?.rating || 0))}</span>
@@ -116,7 +116,7 @@ export function FeedbackPage() {
                   className={`star-button${rating >= value ? " active" : ""}`}
                   role="radio"
                   aria-checked={rating === value}
-                  aria-label={`${value} star${value === 1 ? "" : "s"} — ${RATING_LABELS[value]}`}
+                  aria-label={`${value} star${value === 1 ? "" : "s"}, ${RATING_LABELS[value]}`}
                   onClick={() => setRating(value)}
                 >
                   ★

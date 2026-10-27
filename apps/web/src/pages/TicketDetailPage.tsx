@@ -4,6 +4,7 @@ import { formatTicketNumber } from "@opspilot/core";
 import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PriorityBadge, SlaBadge, Spinner, StatusBadge } from "../components.js";
+import { Select, useConfirm, useToast } from "../ui.js";
 import type { Config, CustomField, TicketDetail } from "../types.js";
 import { CustomFieldInput } from "./TicketsPage.js";
 
@@ -32,13 +33,14 @@ export function TicketDetailPage() {
   const { tenantSlug = "", ticketId = "" } = useParams();
   const { user, memberships } = useAuth();
   const navigate = useNavigate();
+  const confirm = useConfirm();
+  const toast = useToast();
   const role = memberships.find((item) => item.slug === tenantSlug)?.role ?? "employee";
   const canAgent = role === "agent" || role === "tenant_admin";
 
   const [detail, setDetail] = useState<TicketDetail | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const keepConflictError = useRef(false);
@@ -149,7 +151,7 @@ export function TicketDetailPage() {
 
   async function reload(message?: string): Promise<void> {
     setRefresh((value) => value + 1);
-    if (message) setNotice(message);
+    if (message) toast.success(message);
   }
 
   function handleError(caught: unknown): void {
@@ -265,11 +267,20 @@ export function TicketDetailPage() {
   }
 
   async function removeTicket(): Promise<void> {
-    if (!detail || !window.confirm(`Delete ticket ${formatTicketNumber(prefix, detail.number)}?`)) return;
+    if (!detail) return;
+    const ticketLabel = formatTicketNumber(prefix, detail.number);
+    const confirmed = await confirm({
+      title: `Delete ticket ${ticketLabel}?`,
+      body: "The ticket, its conversation, attachments, and history will be removed. This cannot be undone.",
+      confirmLabel: "Delete ticket",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setBusy(true);
     setError(null);
     try {
       await del(`/t/${tenantSlug}/tickets/${ticketId}`);
+      toast.success("Ticket deleted", ticketLabel);
       navigate(`/t/${tenantSlug}/tickets`, { replace: true });
     } catch (caught) {
       handleError(caught);
@@ -304,7 +315,13 @@ export function TicketDetailPage() {
   }
 
   async function removeAttachment(id: string): Promise<void> {
-    if (!window.confirm("Delete this attachment?")) return;
+    const confirmed = await confirm({
+      title: "Delete this attachment?",
+      body: "The file will be removed from the ticket permanently.",
+      confirmLabel: "Delete attachment",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setBusy(true);
     setError(null);
     try {
@@ -350,7 +367,7 @@ export function TicketDetailPage() {
                 Edit ticket
               </button>
               {role === "tenant_admin" && (
-                <button className="button ghost" onClick={() => void removeTicket()} disabled={busy}>
+                <button className="button ghost danger" onClick={() => void removeTicket()} disabled={busy}>
                   Delete
                 </button>
               )}
@@ -368,7 +385,6 @@ export function TicketDetailPage() {
       </div>
 
       <ErrorAlert message={error} />
-      {notice && <div className="alert success">{notice}</div>}
 
       <div className="detail-grid">
         <div className="stack">
@@ -398,31 +414,23 @@ export function TicketDetailPage() {
                 <div className="inline-fields">
                   <label>
                     Category
-                    <select
+                    <Select
+                      ariaLabel="Category"
                       value={editCategoryId}
-                      onChange={(event) => setEditCategoryId(event.target.value)}
+                      onChange={setEditCategoryId}
                       disabled={role === "employee"}
-                    >
-                      {config?.categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={config?.categories.map((category) => ({ value: category.id, label: category.name })) ?? []}
+                    />
                   </label>
                   <label>
                     Priority
-                    <select
+                    <Select
+                      ariaLabel="Priority"
                       value={editPriorityId}
-                      onChange={(event) => setEditPriorityId(event.target.value)}
+                      onChange={setEditPriorityId}
                       disabled={role === "employee"}
-                    >
-                      {config?.priorities.map((priority) => (
-                        <option key={priority.id} value={priority.id}>
-                          {priority.label}
-                        </option>
-                      ))}
-                    </select>
+                      options={config?.priorities.map((priority) => ({ value: priority.id, label: priority.label })) ?? []}
+                    />
                   </label>
                 </div>
                 {editFields.map((field: CustomField) => (
@@ -483,7 +491,7 @@ export function TicketDetailPage() {
           <section className="card">
             <div className="section-heading">
               <h2>Attachments</h2>
-              <span className="muted small">{detail.attachments.length} files</span>
+              <span className="muted small">{detail.attachments.length} {detail.attachments.length === 1 ? "file" : "files"}</span>
             </div>
             {detail.attachments.length === 0 ? (
               <EmptyState title="No attachments">Files shared on this ticket appear here.</EmptyState>
@@ -535,7 +543,7 @@ export function TicketDetailPage() {
           <section className="card">
             <div className="section-heading">
               <h2>Conversation</h2>
-              <span className="muted small">{detail.comments.length} messages</span>
+              <span className="muted small">{detail.comments.length} {detail.comments.length === 1 ? "message" : "messages"}</span>
             </div>
             {detail.comments.length === 0 ? (
               <EmptyState title="No comments yet">Start the conversation below.</EmptyState>
@@ -656,30 +664,27 @@ export function TicketDetailPage() {
               <form className="stack" onSubmit={(event) => void submitAssignment(event)}>
                 <label>
                   Team
-                  <select
+                  <Select
+                    ariaLabel="Team"
                     value={teamId}
-                    onChange={(event) => {
-                      setTeamId(event.target.value);
+                    onChange={(next) => {
+                      setTeamId(next);
                       setAssigneeId("");
                     }}
-                  >
-                    {config?.teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={config?.teams.map((team) => ({ value: team.id, label: team.name })) ?? []}
+                  />
                 </label>
                 <label>
                   Assignee
-                  <select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
-                    <option value="">Unassigned</option>
-                    {teamAgents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    ariaLabel="Assignee"
+                    value={assigneeId}
+                    onChange={setAssigneeId}
+                    options={[
+                      { value: "", label: "Unassigned" },
+                      ...teamAgents.map((agent) => ({ value: agent.id, label: agent.name })),
+                    ]}
+                  />
                 </label>
                 <button className="button secondary" disabled={busy || !teamId} type="submit">
                   Update assignment
@@ -700,14 +705,19 @@ export function TicketDetailPage() {
               <form className="stack" onSubmit={(event) => void submitTransition(event)}>
                 <label>
                   Next status
-                  <select value={transitionId} onChange={(event) => setTransitionId(event.target.value)}>
-                    <option value="">Choose…</option>
-                    {detail.allowed_transitions.map((item) => (
-                      <option key={item.toStatusId} value={item.toStatusId}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    ariaLabel="Next status"
+                    value={transitionId}
+                    onChange={setTransitionId}
+                    placeholder="Choose…"
+                    options={[
+                      { value: "", label: "Choose…" },
+                      ...detail.allowed_transitions.map((item) => ({
+                        value: item.toStatusId,
+                        label: item.label,
+                      })),
+                    ]}
+                  />
                 </label>
                 {needsReason && (
                   <label>

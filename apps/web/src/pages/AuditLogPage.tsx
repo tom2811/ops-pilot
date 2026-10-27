@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, errorMessage, formatDate, humanize } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { Select } from "../ui.js";
 import type { AuditEntry, AuditLog } from "../types.js";
 
 function formatValue(value: unknown): string {
@@ -11,12 +12,12 @@ function formatValue(value: unknown): string {
 }
 
 function summarize(value: unknown): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return "–";
   if (typeof value !== "object") return String(value);
   const entries = Object.entries(value as Record<string, unknown>).filter(
     ([, item]) => item !== null && item !== undefined,
   );
-  if (entries.length === 0) return "—";
+  if (entries.length === 0) return "–";
   return entries.map(([key, item]) => `${key}: ${formatValue(item)}`).join(", ");
 }
 
@@ -32,15 +33,15 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           <strong>{humanize(entry.action.replace(".", " "))}</strong>
           <div className="muted small mono">{entry.action}</div>
         </td>
-        <td>{humanize(entry.entity_type)}</td>
-        <td>{entry.actor_name ?? humanize(entry.actor_role)}</td>
+        <td className="col-entity">{humanize(entry.entity_type)}</td>
+        <td className="col-actor">{entry.actor_name ?? humanize(entry.actor_role)}</td>
         <td className="nowrap">
           {hasDetail ? (
             <button className="button ghost small" onClick={() => setOpen((current) => !current)}>
               {open ? "Hide" : "Details"}
             </button>
           ) : (
-            <span className="muted small">—</span>
+            <span className="muted small">–</span>
           )}
         </td>
       </tr>
@@ -130,36 +131,34 @@ export function AuditLogPage() {
 
       <section className="card">
         <div className="filter-bar">
-          <select
+          <Select
+            ariaLabel="Entity type"
             value={entityType}
-            onChange={(event) => {
-              setEntityType(event.target.value);
+            onChange={(next) => {
+              setEntityType(next);
               setPage(1);
             }}
-            aria-label="Entity type"
-          >
-            <option value="">All entity types</option>
-            {(data?.entity_types ?? []).map((item) => (
-              <option key={item} value={item}>
-                {humanize(item)}
-              </option>
-            ))}
-          </select>
-          <select
+            options={[
+              { value: "", label: "All entity types" },
+              ...(data?.entity_types ?? []).map((item) => ({ value: item, label: humanize(item) })),
+            ]}
+          />
+          <Select
+            ariaLabel="Action group"
             value={action}
-            onChange={(event) => {
-              setAction(event.target.value);
+            onChange={(next) => {
+              setAction(next);
               setPage(1);
             }}
-            aria-label="Action group"
-          >
-            <option value="">All action groups</option>
-            <option value="ticket">Ticket actions</option>
-            <option value="config">Configuration actions</option>
-            <option value="user">People actions</option>
-            <option value="role">Role actions</option>
-            <option value="platform">Platform actions</option>
-          </select>
+            options={[
+              { value: "", label: "All action groups" },
+              { value: "ticket", label: "Ticket actions" },
+              { value: "config", label: "Configuration actions" },
+              { value: "user", label: "People actions" },
+              { value: "role", label: "Role actions" },
+              { value: "platform", label: "Platform actions" },
+            ]}
+          />
         </div>
 
         {loading && !data ? (
@@ -168,13 +167,13 @@ export function AuditLogPage() {
           <EmptyState title="No audit entries">Nothing matches the current filters.</EmptyState>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="audit-table">
               <thead>
                 <tr>
                   <th>When</th>
                   <th>Action</th>
-                  <th>Entity</th>
-                  <th>Actor</th>
+                  <th className="col-entity">Entity</th>
+                  <th className="col-actor">Actor</th>
                   <th />
                 </tr>
               </thead>

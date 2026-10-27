@@ -1,5 +1,19 @@
-import { Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Link,
+  Navigate,
+  NavLink,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
+import { humanize } from "./api.js";
 import { useAuth } from "./auth.js";
+import type { User } from "./types.js";
+import { Icon, Menu, ThemeToggle, useTheme, type IconName } from "./ui.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
@@ -42,9 +56,9 @@ function NoMembership() {
           Signed in as {user?.email}. This account has no active tenant membership.
         </p>
         {user?.isPlatformAdmin && (
-          <button className="button secondary" onClick={() => window.location.assign("/platform")}>
+          <Link className="button secondary" to="/platform">
             Platform
-          </button>
+          </Link>
         )}
         <button className="button secondary" onClick={() => void logout()}>
           Sign out
@@ -54,10 +68,114 @@ function NoMembership() {
   );
 }
 
+function AccountMenuItems({
+  user,
+  close,
+  signOut,
+}: {
+  user: User;
+  close: () => void;
+  signOut: () => void;
+}) {
+  return (
+    <>
+      <div className="menu-head">
+        <strong>{user.displayName}</strong>
+        <span>{user.email}</span>
+      </div>
+      <Link className="menu-item" role="menuitem" to="/account" onClick={close}>
+        <Icon name="account" />
+        Account settings
+      </Link>
+      {user.isPlatformAdmin && (
+        <Link className="menu-item" role="menuitem" to="/platform" onClick={close}>
+          <Icon name="platform" />
+          Platform
+        </Link>
+      )}
+      <div className="menu-sep" />
+      <button
+        type="button"
+        className="menu-item"
+        role="menuitem"
+        onClick={() => {
+          close();
+          signOut();
+        }}
+      >
+        <Icon name="logout" />
+        Sign out
+      </button>
+    </>
+  );
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function sectionTitle(pathname: string): string {
+  if (pathname.includes("/admin")) return "Configuration";
+  if (pathname.includes("/reports")) return "Reports";
+  if (pathname.includes("/users")) return "People";
+  if (pathname.includes("/audit")) return "Audit log";
+  if (/\/tickets\/[^/]+/.test(pathname)) return "Ticket";
+  return "Tickets";
+}
+
 function TenantLayout() {
   const { tenantSlug = "" } = useParams();
   const { user, memberships, loading, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { theme, toggleTheme } = useTheme();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const sidebar = document.getElementById("app-sidebar");
+    const firstLink = sidebar?.querySelector<HTMLElement>(".sb-item");
+    firstLink?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDrawerOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        sidebar?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [],
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      menuBtnRef.current?.focus();
+    };
+  }, [drawerOpen]);
 
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
@@ -76,59 +194,240 @@ function TenantLayout() {
     );
   }
 
+  const can = (permission: string) => membership.permissions.some((item) => item === permission);
+  const makeItem = (path: string, label: string, icon: IconName) => ({
+    to: `/t/${tenantSlug}/${path}`,
+    label,
+    icon,
+  });
+  const navGroups: { label: string; items: ReturnType<typeof makeItem>[] }[] = [
+    {
+      label: "Workspace",
+      items: [makeItem("tickets", "Tickets", "ticket")],
+    },
+    {
+      label: "Insights",
+      items: [
+        ...(can("reports.view") ? [makeItem("reports", "Reports", "reports")] : []),
+        ...(can("audit.view") ? [makeItem("audit", "Audit log", "audit")] : []),
+      ],
+    },
+    {
+      label: "Configure",
+      items: [
+        ...(can("config.manage") ? [makeItem("admin", "Configuration", "admin")] : []),
+        ...(can("users.manage") ? [makeItem("users", "People", "people")] : []),
+      ],
+    },
+  ].filter((group) => group.items.length > 0);
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button className="brand" onClick={() => navigate("/")} title="OpsPilot">
-          <span className="brand-mark small">OP</span>
-          <span>OpsPilot</span>
-        </button>
-        <nav className="main-nav">
-          <NavLink to={`/t/${tenantSlug}/tickets`}>Tickets</NavLink>
-          {membership.permissions.includes("config.manage") && (
-            <NavLink to={`/t/${tenantSlug}/admin`}>Admin</NavLink>
-          )}
-          {membership.permissions.includes("reports.view") && (
-            <NavLink to={`/t/${tenantSlug}/reports`}>Reports</NavLink>
-          )}
-          {membership.permissions.includes("users.manage") && (
-            <NavLink to={`/t/${tenantSlug}/users`}>People</NavLink>
-          )}
-          {membership.permissions.includes("audit.view") && (
-            <NavLink to={`/t/${tenantSlug}/audit`}>Audit</NavLink>
-          )}
+    <div className={`app-shell ${drawerOpen ? "drawer-open" : ""}`.trim()}>
+      <aside className="sidebar" id="app-sidebar" aria-label="Main navigation">
+        <div className="sb-brand">
+          <span className="brand-mark">OP</span>
+          <span className="sb-brand-text">
+            <strong>OpsPilot</strong>
+            <span>Service desk</span>
+          </span>
+        </div>
+
+        <div className="ws-switch">
+          <Menu
+            ariaLabel="Switch workspace"
+            triggerClassName="ws-trigger"
+            label={
+              <>
+                <span className="ws-mark">{initials(membership.name)}</span>
+                <span className="ws-meta">
+                  <strong>{membership.name}</strong>
+                  <small>{humanize(membership.role)}</small>
+                </span>
+                <Icon name="chevron" className="ws-chevs icon-sm" />
+              </>
+            }
+          >
+            {(close) => (
+              <>
+                <div className="menu-head">
+                  <strong>Workspaces</strong>
+                  <span>Switch workspace</span>
+                </div>
+                {memberships.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="menu-item"
+                    role="menuitem"
+                    aria-current={item.slug === tenantSlug ? "true" : undefined}
+                    onClick={() => {
+                      close();
+                      if (item.slug !== tenantSlug) navigate(`/t/${item.slug}/tickets`);
+                    }}
+                  >
+                    <span className="ws-mark small">{initials(item.name)}</span>
+                    <span className="menu-item-label">
+                      <strong>{item.name}</strong>
+                      <small>{humanize(item.role)}</small>
+                    </span>
+                    {item.slug === tenantSlug && <Icon name="check" className="icon-sm" />}
+                  </button>
+                ))}
+              </>
+            )}
+          </Menu>
+        </div>
+
+        <nav className="sb-nav">
+          {navGroups.map((group) => (
+            <div key={group.label}>
+              <p className="sb-label">{group.label}</p>
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to} className="sb-item" title={item.label}>
+                  <Icon name={item.icon} />
+                  <span className="sb-item-label">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
         </nav>
-        <div className="topbar-right">
-          <select
-            aria-label="Workspace"
-            value={tenantSlug}
-            onChange={(event) => navigate(`/t/${event.target.value}/tickets`)}
+
+        <div className="sb-foot">
+          <Menu
+            ariaLabel="Account menu"
+            triggerClassName="sb-account"
+            label={
+              <>
+                <span className="avatar">{initials(user.displayName)}</span>
+                <span className="account-meta">
+                  <strong>{user.displayName}</strong>
+                  <small>{humanize(membership.role)}</small>
+                </span>
+              </>
+            }
           >
-            {memberships.map((item) => (
-              <option key={item.id} value={item.slug}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          {user.isPlatformAdmin && <NavLink className="account-link" to="/platform">Platform</NavLink>}
-          <NavLink className="account-link" to="/account">Account</NavLink>
-          <div className="user-chip" title={user.email}>
-            <span>{user.displayName}</span>
-            <span className="role-dot">{membership.role.replace("_", " ")}</span>
-          </div>
+            {(close) => (
+              <AccountMenuItems
+                user={user}
+                close={close}
+                signOut={() => void logout().then(() => navigate("/login"))}
+              />
+            )}
+          </Menu>
+        </div>
+      </aside>
+
+      <button
+        type="button"
+        className="drawer-scrim"
+        aria-label="Close navigation"
+        tabIndex={drawerOpen ? 0 : -1}
+        onClick={() => setDrawerOpen(false)}
+      />
+
+      <div className="workspace">
+        <header className="topbar">
           <button
-            className="button ghost small"
-            onClick={() => {
-              void logout().then(() => navigate("/login"));
-            }}
+            ref={menuBtnRef}
+            type="button"
+            className="icon-btn menu-btn"
+            aria-label="Open navigation"
+            aria-expanded={drawerOpen}
+            aria-controls="app-sidebar"
+            onClick={() => setDrawerOpen(true)}
           >
-            Sign out
+            <Icon name="menu" />
           </button>
+          <div className="crumb">
+            <span className="workspace-name">{membership.name}</span>
+            <span className="sep workspace-sep">/</span>
+            <strong>{sectionTitle(location.pathname)}</strong>
+          </div>
+          <div className="topbar-right">
+            <span className="badge subtle role-chip">{humanize(membership.role)}</span>
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <div className="topbar-account">
+              <Menu
+                ariaLabel="Account menu"
+                triggerClassName="icon-btn"
+                label={<span className="avatar">{initials(user.displayName)}</span>}
+              >
+                {(close) => (
+                  <AccountMenuItems
+                    user={user}
+                    close={close}
+                    signOut={() => void logout().then(() => navigate("/login"))}
+                  />
+                )}
+              </Menu>
+            </div>
+          </div>
+        </header>
+        <main className="page">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function StandaloneLayout({ children }: { children: ReactNode }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
+
+  return (
+    <div className="standalone-shell">
+      <header className="standalone-bar">
+        <Link className="sb-brand" to="/">
+          <span className="brand-mark">OP</span>
+          <span className="sb-brand-text">
+            <strong>OpsPilot</strong>
+            <span>Service desk</span>
+          </span>
+        </Link>
+        <div className="topbar-right">
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          {user && (
+            <Menu
+              ariaLabel="Account menu"
+              triggerClassName="icon-btn"
+              label={<span className="avatar">{initials(user.displayName)}</span>}
+            >
+              {(close) => (
+                <>
+                  <div className="menu-head">
+                    <strong>{user.displayName}</strong>
+                    <span>{user.email}</span>
+                  </div>
+                  <Link className="menu-item" role="menuitem" to="/account" onClick={close}>
+                    <Icon name="account" />
+                    Account settings
+                  </Link>
+                  <Link className="menu-item" role="menuitem" to="/" onClick={close}>
+                    <Icon name="ticket" />
+                    Back to workspace
+                  </Link>
+                  <div className="menu-sep" />
+                  <button
+                    type="button"
+                    className="menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      close();
+                      void logout().then(() => navigate("/login"));
+                    }}
+                  >
+                    <Icon name="logout" />
+                    Sign out
+                  </button>
+                </>
+              )}
+            </Menu>
+          )}
         </div>
       </header>
-      <main className="page">
-        <Outlet />
-      </main>
+      {children}
     </div>
   );
 }
@@ -139,9 +438,9 @@ function NotFound() {
       <div className="card narrow">
         <h1>Not found</h1>
         <p className="muted">That page does not exist.</p>
-        <a className="button" href="/">
+        <Link className="button" to="/">
           Back home
-        </a>
+        </Link>
       </div>
     </div>
   );
@@ -156,8 +455,22 @@ export function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/invite/:token" element={<InvitationPage />} />
       <Route path="/feedback" element={<FeedbackPage />} />
-      <Route path="/account" element={<AccountPage />} />
-      <Route path="/platform" element={<PlatformPage />} />
+      <Route
+        path="/account"
+        element={
+          <StandaloneLayout>
+            <AccountPage />
+          </StandaloneLayout>
+        }
+      />
+      <Route
+        path="/platform"
+        element={
+          <StandaloneLayout>
+            <PlatformPage />
+          </StandaloneLayout>
+        }
+      />
       <Route path="/t/:tenantSlug" element={<TenantLayout />}>
         <Route index element={<Navigate to="tickets" replace />} />
         <Route path="tickets" element={<TicketsPage />} />

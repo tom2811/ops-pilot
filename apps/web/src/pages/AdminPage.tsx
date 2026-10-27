@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, del, errorMessage, humanize, patch, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { Select, useConfirm, useToast } from "../ui.js";
 import type {
   Category,
   Config,
@@ -35,10 +36,11 @@ export function AdminPage() {
   const { memberships } = useAuth();
   const membership = memberships.find((item) => item.slug === tenantSlug);
   const canManage = membership?.permissions.includes("config.manage") ?? false;
+  const confirm = useConfirm();
+  const toast = useToast();
   const [config, setConfig] = useState<Config | null>(null);
   const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
@@ -133,10 +135,9 @@ export function AdminPage() {
   async function run(action: () => Promise<unknown>, message: string): Promise<void> {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await action();
-      setNotice(message);
+      toast.success(message);
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -292,8 +293,14 @@ export function AdminPage() {
   }
 
   function deactivate(path: string, label: string): void {
-    if (!window.confirm(`Deactivate ${label}?`)) return;
-    void run(() => del(path), `${label} deactivated.`);
+    void confirm({
+      title: `Deactivate ${label}?`,
+      body: "Existing tickets keep their history, but this option will no longer be offered on new work.",
+      confirmLabel: "Deactivate",
+      tone: "danger",
+    }).then((confirmed) => {
+      if (confirmed) void run(() => del(path), `${label} deactivated.`);
+    });
   }
 
   function editTeam(team: Team): void {
@@ -356,7 +363,6 @@ export function AdminPage() {
       </PageHeader>
 
       <ErrorAlert message={error} />
-      {notice && <div className="alert success">{notice}</div>}
 
       <section className="card">
         <h2>Workspace settings</h2>
@@ -452,13 +458,12 @@ export function AdminPage() {
             </label>
             <label>
               Default team
-              <select value={categoryTeam} onChange={(event) => setCategoryTeam(event.target.value)}>
-                {config.teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Default team"
+                value={categoryTeam}
+                onChange={setCategoryTeam}
+                options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+              />
             </label>
             <div className="inline-fields">
               <button className="button secondary" disabled={busy}>
@@ -504,13 +509,18 @@ export function AdminPage() {
               </label>
               <label>
                 Color
-                <select value={priorityColor} onChange={(event) => setPriorityColor(event.target.value)}>
-                  <option value="red">Red</option>
-                  <option value="orange">Orange</option>
-                  <option value="blue">Blue</option>
-                  <option value="green">Green</option>
-                  <option value="gray">Gray</option>
-                </select>
+                <Select
+                  ariaLabel="Color"
+                  value={priorityColor}
+                  onChange={setPriorityColor}
+                  options={[
+                    { value: "red", label: "Red" },
+                    { value: "orange", label: "Orange" },
+                    { value: "blue", label: "Blue" },
+                    { value: "green", label: "Green" },
+                    { value: "gray", label: "Gray" },
+                  ]}
+                />
               </label>
             </div>
             <div className="inline-fields">
@@ -536,25 +546,27 @@ export function AdminPage() {
             <div className="inline-fields">
               <label>
                 Priority
-                <select value={slaPriority} onChange={(event) => setSlaPriority(event.target.value)}>
-                  <option value="">All priorities</option>
-                  {config.priorities.map((priority) => (
-                    <option key={priority.id} value={priority.id}>
-                      {priority.label}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  ariaLabel="SLA priority"
+                  value={slaPriority}
+                  onChange={setSlaPriority}
+                  options={[
+                    { value: "", label: "All priorities" },
+                    ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
+                  ]}
+                />
               </label>
               <label>
                 Category
-                <select value={slaCategory} onChange={(event) => setSlaCategory(event.target.value)}>
-                  <option value="">All categories</option>
-                  {config.categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  ariaLabel="SLA category"
+                  value={slaCategory}
+                  onChange={setSlaCategory}
+                  options={[
+                    { value: "", label: "All categories" },
+                    ...config.categories.map((category) => ({ value: category.id, label: category.name })),
+                  ]}
+                />
               </label>
             </div>
             <div className="inline-fields">
@@ -613,20 +625,27 @@ export function AdminPage() {
             <div className="inline-fields">
               <label>
                 Type
-                <select value={fieldType} onChange={(event) => setFieldType(event.target.value)}>
-                  {["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => (
-                    <option key={type} value={type}>
-                      {humanize(type)}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  ariaLabel="Custom field type"
+                  value={fieldType}
+                  onChange={setFieldType}
+                  options={["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => ({
+                    value: type,
+                    label: humanize(type),
+                  }))}
+                />
               </label>
               <label>
                 Visibility
-                <select value={fieldVisibility} onChange={(event) => setFieldVisibility(event.target.value)}>
-                  <option value="internal">Internal</option>
-                  <option value="public">Public</option>
-                </select>
+                <Select
+                  ariaLabel="Custom field visibility"
+                  value={fieldVisibility}
+                  onChange={setFieldVisibility}
+                  options={[
+                    { value: "internal", label: "Internal" },
+                    { value: "public", label: "Public" },
+                  ]}
+                />
               </label>
             </div>
             {(fieldType === "select" || fieldType === "multiselect") && (
@@ -637,14 +656,15 @@ export function AdminPage() {
             )}
             <label>
               Applies to category
-              <select value={fieldCategory} onChange={(event) => setFieldCategory(event.target.value)}>
-                <option value="">All categories</option>
-                {config.categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Applies to category"
+                value={fieldCategory}
+                onChange={setFieldCategory}
+                options={[
+                  { value: "", label: "All categories" },
+                  ...config.categories.map((category) => ({ value: category.id, label: category.name })),
+                ]}
+              />
             </label>
             <label className="check-row">
               <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
@@ -677,23 +697,21 @@ export function AdminPage() {
             </label>
             <label>
               When category is
-              <select value={ruleCategory} onChange={(event) => setRuleCategory(event.target.value)}>
-                {config.categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="When category is"
+                value={ruleCategory}
+                onChange={setRuleCategory}
+                options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+              />
             </label>
             <label>
               Route to
-              <select value={ruleTeam} onChange={(event) => setRuleTeam(event.target.value)}>
-                {config.teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Route to"
+                value={ruleTeam}
+                onChange={setRuleTeam}
+                options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+              />
             </label>
             <div className="inline-fields">
               <button className="button secondary" disabled={busy}>

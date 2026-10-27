@@ -3,19 +3,20 @@ import { useParams } from "react-router-dom";
 import { api, errorMessage, formatDate, humanize } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { Select } from "../ui.js";
 import type { Report, ReportTrendPoint } from "../types.js";
 
 const PERIODS = [7, 30, 90, 365];
 
 function formatHours(value: number): string {
-  if (!value) return "—";
+  if (!value) return "–";
   if (value < 1) return `${Math.round(value * 60)}m`;
   if (value < 48) return `${value.toFixed(1)}h`;
   return `${(value / 24).toFixed(1)}d`;
 }
 
 function formatMinutes(value: number): string {
-  if (!value) return "—";
+  if (!value) return "–";
   if (value < 60) return `${Math.round(value)}m`;
   return `${(value / 60).toFixed(1)}h`;
 }
@@ -31,6 +32,9 @@ function TrendChart({ points }: { points: ReportTrendPoint[] }) {
   return (
     <div className="trend-chart">
       <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Tickets created and resolved over time">
+        {[4, 13, 22, 31].map((y) => (
+          <line key={y} x1="0" y1={y} x2="100" y2={y} className="chart-grid" />
+        ))}
         <line x1="0" y1="40" x2="100" y2="40" className="chart-axis" />
         <polyline points={line("created")} className="chart-line created" />
         <polyline points={line("resolved")} className="chart-line resolved" />
@@ -135,13 +139,12 @@ export function ReportsPage() {
         eyebrow="Insights"
         title="Reports"
         actions={
-          <select value={period} onChange={(event) => setPeriod(Number(event.target.value))} aria-label="Reporting period">
-            {PERIODS.map((days) => (
-              <option key={days} value={days}>
-                Last {days} days
-              </option>
-            ))}
-          </select>
+          <Select
+            ariaLabel="Reporting period"
+            value={String(period)}
+            onChange={(next) => setPeriod(Number(next))}
+            options={PERIODS.map((days) => ({ value: String(days), label: `Last ${days} days` }))}
+          />
         }
       >
         <p className="muted">Ticket flow, SLA health, and customer satisfaction for this workspace.</p>
