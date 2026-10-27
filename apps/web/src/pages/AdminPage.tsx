@@ -261,12 +261,11 @@ export function AdminPage() {
           ? patch(`/t/${tenantSlug}/routing-rules/${editingRuleId}`, {
               name: ruleName,
               teamId: ruleTeam,
-              sortOrder: 100,
             })
           : post(`/t/${tenantSlug}/routing-rules`, {
               name: ruleName,
               teamId: ruleTeam,
-              sortOrder: 100,
+              sortOrder: 0,
               conditions: {
                 all: [{ field: "category_id", op: "eq", value: ruleCategory }],
               },
@@ -667,8 +666,9 @@ export function AdminPage() {
         <section className="card span-2">
           <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
           <p className="muted">
-            Rules run before the category default. This builder creates a single category condition; the API accepts
-            combined priority and custom-field conditions too.
+            Rules run before the category default, and the newest rule wins when two rules are equally specific. This
+            builder creates a single category condition; the API accepts combined priority and custom-field conditions
+            too.
           </p>
           <form className="inline-form" onSubmit={submitRule}>
             <label>

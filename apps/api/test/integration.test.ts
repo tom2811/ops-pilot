@@ -356,6 +356,52 @@ describe("configuration validation", () => {
     expect(duplicateKey.statusCode).toBe(409);
     expect(duplicateKey.json().error).toBe("That priority key is already in use");
   });
+
+  it("lets a new routing rule override the seeded category rule", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const hardware = await admin.query<{ id: string }>(
+      "select id from categories where tenant_id = $1 and slug = 'hardware'",
+      [fixtures.acme.id],
+    );
+    const network = await admin.query<{ id: string }>(
+      "select id from teams where tenant_id = $1 and slug = 'network'",
+      [fixtures.acme.id],
+    );
+    const preview = (categoryId: string) =>
+      inject(adminCookie, {
+        method: "POST",
+        url: "/api/t/acme/routing/preview",
+        payload: { categoryId, priorityId: fixtures.acmePriority, customFields: {} },
+      });
+
+    const created = await inject(adminCookie, {
+      method: "POST",
+      url: "/api/t/acme/routing-rules",
+      payload: {
+        name: `Hardware override ${Date.now()}`,
+        teamId: network.rows[0]?.id,
+        sortOrder: 0,
+        conditions: { all: [{ field: "category_id", op: "eq", value: hardware.rows[0]?.id }] },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+
+    const matched = await preview(hardware.rows[0]?.id ?? "");
+    expect(matched.statusCode, matched.body).toBe(200);
+    expect(matched.json().teamName).toBe("Network Team");
+    expect(matched.json().ruleId).toBe(created.json().id);
+
+    const removed = await inject(adminCookie, {
+      method: "DELETE",
+      url: `/api/t/acme/routing-rules/${created.json().id}`,
+    });
+    expect(removed.statusCode).toBe(204);
+
+    const fallback = await preview(hardware.rows[0]?.id ?? "");
+    expect(fallback.statusCode, fallback.body).toBe(200);
+    expect(fallback.json().teamName).toBe("Service Desk");
+    expect(fallback.json().ruleId).not.toBe(created.json().id);
+  });
 });
 
 describe("ticket lifecycle and CSAT", () => {

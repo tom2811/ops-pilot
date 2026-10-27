@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
-import { api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
+import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PriorityBadge, SlaBadge, Spinner, StatusBadge } from "../components.js";
 import type { Config, CustomField, TicketDetail } from "../types.js";
@@ -41,6 +41,7 @@ export function TicketDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
+  const keepConflictError = useRef(false);
 
   const [transitionId, setTransitionId] = useState("");
   const [reason, setReason] = useState("");
@@ -71,7 +72,8 @@ export function TicketDetailPage() {
         if (cancelled) return;
         setDetail(nextDetail);
         setConfig(nextConfig);
-        setError(null);
+        if (!keepConflictError.current) setError(null);
+        keepConflictError.current = false;
       })
       .catch((caught) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -150,6 +152,14 @@ export function TicketDetailPage() {
     if (message) setNotice(message);
   }
 
+  function handleError(caught: unknown): void {
+    setError(errorMessage(caught));
+    if (caught instanceof ApiError && caught.status === 409) {
+      keepConflictError.current = true;
+      setRefresh((value) => value + 1);
+    }
+  }
+
   async function submitTransition(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (!transition) return;
@@ -179,7 +189,7 @@ export function TicketDetailPage() {
       setSummary("");
       await reload("Status updated.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setBusy(false);
     }
@@ -197,7 +207,7 @@ export function TicketDetailPage() {
       setCommentBody("");
       await reload("Comment added.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setBusy(false);
     }
@@ -215,7 +225,7 @@ export function TicketDetailPage() {
       });
       await reload("Assignment updated.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setBusy(false);
     }
@@ -248,7 +258,7 @@ export function TicketDetailPage() {
       setEditing(false);
       await reload("Ticket updated.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setEditBusy(false);
     }
@@ -262,7 +272,7 @@ export function TicketDetailPage() {
       await del(`/t/${tenantSlug}/tickets/${ticketId}`);
       navigate(`/t/${tenantSlug}/tickets`, { replace: true });
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
       setBusy(false);
     }
   }
@@ -287,7 +297,7 @@ export function TicketDetailPage() {
       setFileKey((value) => value + 1);
       await reload("Attachment uploaded.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setBusy(false);
     }
@@ -301,7 +311,7 @@ export function TicketDetailPage() {
       await del(`/t/${tenantSlug}/attachments/${id}`);
       await reload("Attachment deleted.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      handleError(caught);
     } finally {
       setBusy(false);
     }

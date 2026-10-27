@@ -41,7 +41,7 @@ export async function previewRoute(
      from routing_rules r
      join teams t on t.tenant_id = r.tenant_id and t.id = r.team_id
      where r.tenant_id = $1 and r.is_active
-     order by jsonb_array_length(r.conditions->'all') desc, r.sort_order, r.id`,
+     order by jsonb_array_length(r.conditions->'all') desc, r.sort_order, r.created_at desc, r.id`,
     [tenantId],
   );
 
