@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
+import { addBusinessMinutes, formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
 describe("matchesRoutingConditions", () => {
@@ -64,5 +64,44 @@ describe("renderTemplate", () => {
     expect(renderTemplate("Hi {{name}}, ticket {{number}} {{missing}}", { name: "Sam", number: 42 })).toBe(
       "Hi Sam, ticket 42 ",
     );
+  });
+});
+
+describe("addBusinessMinutes", () => {
+  const config = {
+    startHour: 9,
+    startMinute: 0,
+    endHour: 17,
+    endMinute: 0,
+    businessDays: [1, 2, 3, 4, 5], // Mon-Fri
+  };
+
+  it("adds minutes within the same business day", () => {
+    // Mon Oct 26 2026, 10:00 UTC
+    const start = new Date("2026-10-26T10:00:00Z");
+    const result = addBusinessMinutes(start, 120, config);
+    expect(result.toISOString()).toBe("2026-10-26T12:00:00.000Z");
+  });
+
+  it("rolls over to next business day when exceeding closing time", () => {
+    // Mon Oct 26 2026, 16:00 UTC (1 hour before close at 17:00)
+    // Add 120 mins -> 60 mins Monday, remaining 60 mins Tuesday 09:00 -> 10:00
+    const start = new Date("2026-10-26T16:00:00Z");
+    const result = addBusinessMinutes(start, 120, config);
+    expect(result.toISOString()).toBe("2026-10-27T10:00:00.000Z");
+  });
+
+  it("skips weekends when rolling over Friday evening", () => {
+    // Fri Oct 30 2026, 16:30 UTC (30 mins before close)
+    // Add 60 mins -> 30 mins Friday, rolls over weekend to Monday Nov 2 09:30 UTC
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, config);
+    expect(result.toISOString()).toBe("2026-11-02T09:30:00.000Z");
+  });
+
+  it("falls back to calendar addition when config is omitted", () => {
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60);
+    expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
   });
 });

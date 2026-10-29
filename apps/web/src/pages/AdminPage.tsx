@@ -58,6 +58,7 @@ export function AdminPage() {
   const [slaCategory, setSlaCategory] = useState("");
   const [slaResponse, setSlaResponse] = useState("60");
   const [slaResolution, setSlaResolution] = useState("480");
+  const [slaBusinessHours, setSlaBusinessHours] = useState(false);
 
   const [fieldLabel, setFieldLabel] = useState("");
   const [fieldKeyValue, setFieldKeyValue] = useState("");
@@ -82,6 +83,8 @@ export function AdminPage() {
   const [settingsPrefix, setSettingsPrefix] = useState("OPS");
   const [settingsReopenDays, setSettingsReopenDays] = useState("14");
   const [settingsAutoCloseDays, setSettingsAutoCloseDays] = useState("7");
+  const [settingsBhStart, setSettingsBhStart] = useState("09:00");
+  const [settingsBhEnd, setSettingsBhEnd] = useState("17:00");
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +100,8 @@ export function AdminPage() {
         setSettingsPrefix(next.settings?.ticket_prefix ?? "OPS");
         setSettingsReopenDays(String(next.settings?.reopen_window_days ?? 14));
         setSettingsAutoCloseDays(String(next.settings?.auto_close_days ?? 7));
+        setSettingsBhStart(next.settings?.business_hours_start ? next.settings.business_hours_start.slice(0, 5) : "09:00");
+        setSettingsBhEnd(next.settings?.business_hours_end ? next.settings.business_hours_end.slice(0, 5) : "17:00");
       })
       .catch((caught) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -208,6 +213,7 @@ export function AdminPage() {
       categoryId: slaCategory || null,
       responseMinutes: Number(slaResponse),
       resolutionMinutes: Number(slaResolution),
+      businessHoursOnly: slaBusinessHours,
     };
     void run(
       () =>
@@ -217,6 +223,7 @@ export function AdminPage() {
       editingSlaId ? "SLA policy updated." : "SLA policy created.",
     ).then(() => {
       setSlaName("");
+      setSlaBusinessHours(false);
       setEditingSlaId("");
     });
   }
@@ -287,6 +294,8 @@ export function AdminPage() {
           ticketPrefix: settingsPrefix,
           reopenWindowDays: Number(settingsReopenDays),
           autoCloseDays: Number(settingsAutoCloseDays),
+          businessHoursStart: settingsBhStart,
+          businessHoursEnd: settingsBhEnd,
         }),
       "Workspace settings updated.",
     );
@@ -348,6 +357,7 @@ export function AdminPage() {
     setSlaCategory(policy.category_id ?? "");
     setSlaResponse(String(policy.response_minutes));
     setSlaResolution(String(policy.resolution_minutes));
+    setSlaBusinessHours(Boolean(policy.business_hours_only));
   }
 
   const teamNameById = new Map(config.teams.map((team) => [team.id, team.name]));
@@ -397,6 +407,24 @@ export function AdminPage() {
               min={0}
               value={settingsAutoCloseDays}
               onChange={(event) => setSettingsAutoCloseDays(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Business hours start
+            <input
+              type="time"
+              value={settingsBhStart}
+              onChange={(event) => setSettingsBhStart(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Business hours end
+            <input
+              type="time"
+              value={settingsBhEnd}
+              onChange={(event) => setSettingsBhEnd(event.target.value)}
               required
             />
           </label>
@@ -674,6 +702,14 @@ export function AdminPage() {
                   />
                 </label>
               </div>
+              <label className="check-row span-2">
+                <input
+                  type="checkbox"
+                  checked={slaBusinessHours}
+                  onChange={(event) => setSlaBusinessHours(event.target.checked)}
+                />
+                Business hours only (pause clock outside operating hours)
+              </label>
               <div className="form-actions span-2">
                 <button className="button secondary" disabled={busy}>
                   {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
@@ -808,7 +844,8 @@ export function AdminPage() {
                       <span className="muted small">
                         {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
                         {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
-                        {policy.response_minutes}m / {policy.resolution_minutes}m
+                        {policy.response_minutes}m / {policy.resolution_minutes}m ·{" "}
+                        {policy.business_hours_only ? "business hours" : "24x7"}
                       </span>
                     </div>
                     <ConfigActions

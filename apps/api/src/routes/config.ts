@@ -121,13 +121,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
               [tenantId],
             ),
         client.query(
-          "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version from tenant_settings where tenant_id = $1",
+          "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version, business_hours_start, business_hours_end, business_days from tenant_settings where tenant_id = $1",
           [tenantId],
         ),
         role === "employee"
           ? Promise.resolve({ rows: [] })
           : client.query(
-              `select id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active
+              `select id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active, business_hours_only
                from sla_policies where tenant_id = $1 and is_active
                order by name`,
               [tenantId],
@@ -228,9 +228,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return withTenant(tenantId, userId, async (client) => {
       const result = await client.query(
         `insert into sla_policies
-          (tenant_id, name, priority_id, category_id, response_minutes, resolution_minutes)
-         values ($1, $2, $3, $4, $5, $6)
-         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active`,
+          (tenant_id, name, priority_id, category_id, response_minutes, resolution_minutes, business_hours_only)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active, business_hours_only`,
         [
           tenantId,
           input.name,
@@ -238,6 +238,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           input.categoryId ?? null,
           input.responseMinutes,
           input.resolutionMinutes,
+          input.businessHoursOnly ?? false,
         ],
       );
       const policy = result.rows[0];
@@ -514,9 +515,10 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
            category_id = case when $6 then $7 else category_id end,
            response_minutes = coalesce($8, response_minutes),
            resolution_minutes = coalesce($9, resolution_minutes),
+           business_hours_only = case when $10 then $11 else business_hours_only end,
            updated_at = now()
          where tenant_id = $1 and id = $2
-         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active`,
+         returning id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active, business_hours_only`,
         [
           tenantId,
           id,
@@ -527,6 +529,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           input.categoryId ?? null,
           input.responseMinutes,
           input.resolutionMinutes,
+          Object.hasOwn(input, "businessHoursOnly"),
+          input.businessHoursOnly ?? false,
         ],
       );
       if (!result.rows[0]) notFound("SLA policy not found");
@@ -553,10 +557,22 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const result = await client.query(
         `update tenant_settings set timezone = $2, ticket_prefix = $3,
                 reopen_window_days = $4, auto_close_days = $5,
+                business_hours_start = coalesce($6, business_hours_start),
+                business_hours_end = coalesce($7, business_hours_end),
+                business_days = coalesce($8, business_days),
                 config_version = config_version + 1, updated_at = now()
          where tenant_id = $1
-         returning timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version`,
-        [tenantId, input.timezone, input.ticketPrefix, input.reopenWindowDays, input.autoCloseDays],
+         returning timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version, business_hours_start, business_hours_end, business_days`,
+        [
+          tenantId,
+          input.timezone,
+          input.ticketPrefix,
+          input.reopenWindowDays,
+          input.autoCloseDays,
+          input.businessHoursStart ?? null,
+          input.businessHoursEnd ?? null,
+          input.businessDays ?? null,
+        ],
       );
       await writeAudit(client, tenantId, { id: userId, role }, "config.settings_updated", "tenant_settings", tenantId, null, input, req.correlationId);
       return result.rows[0];

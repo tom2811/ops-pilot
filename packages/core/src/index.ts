@@ -241,6 +241,9 @@ export const tenantSettingsInputSchema = z.object({
     .regex(/^[A-Z0-9]+$/),
   reopenWindowDays: z.number().int().min(0).max(3650),
   autoCloseDays: z.number().int().min(0).max(3650),
+  businessHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/).optional(),
+  businessHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/).optional(),
+  businessDays: z.array(z.number().int().min(1).max(7)).optional(),
 });
 
 export const slaPolicyInputSchema = z.object({
@@ -249,6 +252,7 @@ export const slaPolicyInputSchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   responseMinutes: z.number().int().min(1).max(525_600),
   resolutionMinutes: z.number().int().min(1).max(525_600),
+  businessHoursOnly: z.boolean().optional(),
 });
 
 export const notificationTemplateInputSchema = z.object({
@@ -339,4 +343,60 @@ export function stagePausesResolution(stage: Stage): boolean {
 
 export function stageStopsResolution(stage: Stage): boolean {
   return stage === "resolved" || stage === "closed";
+}
+
+export type BusinessHoursConfig = {
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+  businessDays: number[];
+};
+
+export function addBusinessMinutes(
+  from: Date,
+  minutesToAdd: number,
+  config?: BusinessHoursConfig,
+): Date {
+  if (!config || minutesToAdd <= 0) {
+    return new Date(from.getTime() + minutesToAdd * 60000);
+  }
+  const current = new Date(from);
+  let remaining = minutesToAdd;
+
+  const startTotal = config.startHour * 60 + config.startMinute;
+  const endTotal = config.endHour * 60 + config.endMinute;
+  const windowMinutes = Math.max(0, endTotal - startTotal);
+  if (windowMinutes === 0) {
+    return new Date(from.getTime() + minutesToAdd * 60000);
+  }
+
+  while (remaining > 0) {
+    const day = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
+    const currentMins = current.getUTCHours() * 60 + current.getUTCMinutes();
+    const isBusinessDay = config.businessDays.includes(day);
+
+    if (!isBusinessDay || currentMins >= endTotal) {
+      current.setUTCDate(current.getUTCDate() + 1);
+      current.setUTCHours(config.startHour, config.startMinute, 0, 0);
+      continue;
+    }
+
+    if (currentMins < startTotal) {
+      current.setUTCHours(config.startHour, config.startMinute, 0, 0);
+      continue;
+    }
+
+    const availableToday = endTotal - currentMins;
+    if (remaining <= availableToday) {
+      current.setUTCMinutes(current.getUTCMinutes() + remaining);
+      remaining = 0;
+    } else {
+      remaining -= availableToday;
+      current.setUTCDate(current.getUTCDate() + 1);
+      current.setUTCHours(config.startHour, config.startMinute, 0, 0);
+    }
+  }
+
+  return current;
 }

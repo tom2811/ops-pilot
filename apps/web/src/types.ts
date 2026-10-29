@@ -57,6 +57,9 @@ export type TenantSettings = {
   auto_close_days: number;
   branding: Record<string, unknown>;
   config_version: number;
+  business_hours_start?: string;
+  business_hours_end?: string;
+  business_days?: number[];
 };
 
 export type NotificationTemplate = {
@@ -75,6 +78,7 @@ export type SlaPolicy = {
   category_id: string | null;
   response_minutes: number;
   resolution_minutes: number;
+  business_hours_only?: boolean;
   is_active: boolean;
 };
 
