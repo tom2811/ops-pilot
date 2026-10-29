@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
 import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PriorityBadge, SlaBadge, Spinner, StatusBadge } from "../components.js";
+import { DetailSkeleton, EmptyState, ErrorAlert, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
 import type { Config, CustomField, TicketDetail } from "../types.js";
 import { CustomFieldInput } from "./TicketsPage.js";
@@ -94,7 +94,7 @@ export function TicketDetailPage() {
     setAssigneeId(detail.assignee_id ?? "");
   }, [detail, config]);
 
-  if (loading && !detail) return <Spinner label="Loading ticket…" />;
+  if (loading && !detail) return <DetailSkeleton label="Loading ticket" />;
   if (!detail) {
     return (
       <div className="stack">

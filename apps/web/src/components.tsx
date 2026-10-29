@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { humanize } from "./api.js";
+import { Icon } from "./ui.js";
+import type { ReportTrendPoint } from "./types.js";
 
 export function StatusBadge({ label, stage }: { label: string; stage: string }) {
   return <span className={`badge status-${stage}`}>{label}</span>;
@@ -54,11 +56,168 @@ export function ErrorAlert({ message }: { message: string | null }) {
   return <div className="alert error">{message}</div>;
 }
 
-export function Spinner({ label = "Loading…" }: { label?: string }) {
+export function CardSkeleton({ label = "Loading…" }: { label?: string }) {
   return (
-    <div className="loading">
-      <span className="spinner" />
-      {label}
+    <div className="center-page">
+      <div className="card narrow card-skeleton" role="status" aria-busy="true">
+        <span className="sr-only">{label}</span>
+        <span className="skeleton skeleton-mark" aria-hidden="true" />
+        <span className="skeleton" style={{ width: 92, height: 9 }} aria-hidden="true" />
+        <span className="skeleton" style={{ width: 190, height: 22 }} aria-hidden="true" />
+        <span className="skeleton" style={{ width: "88%" }} aria-hidden="true" />
+        <span className="skeleton" style={{ width: "64%" }} aria-hidden="true" />
+        <span className="skeleton skeleton-button" aria-hidden="true" />
+      </div>
+    </div>
+  );
+}
+
+export function Pager({
+  page,
+  totalPages,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (page: number) => void;
+}) {
+  return (
+    <div className="pager" role="group" aria-label="Pagination">
+      <button
+        type="button"
+        className="pager-btn"
+        aria-label="Previous page"
+        disabled={page <= 1}
+        onClick={() => onChange(page - 1)}
+      >
+        <Icon name="chevronLeft" />
+      </button>
+      <span className="pager-label" aria-live="polite">
+        {page} of {totalPages}
+      </span>
+      <button
+        type="button"
+        className="pager-btn"
+        aria-label="Next page"
+        disabled={page >= totalPages}
+        onClick={() => onChange(page + 1)}
+      >
+        <Icon name="chevronRight" />
+      </button>
+    </div>
+  );
+}
+
+export function SkeletonRows({ cols, rows = 6 }: { cols: number; rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, row) => (
+        <tr key={row} className="skeleton-row" aria-hidden="true">
+          {Array.from({ length: cols }, (_, col) => (
+            <td key={col}>
+              <span className="skeleton" style={{ width: `${[68, 42, 58, 36, 52, 46, 62, 40][col % 8]}%` }} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+export function PageSkeleton({
+  rows = 6,
+  cols = 5,
+  label = "Loading",
+}: {
+  rows?: number;
+  cols?: number;
+  label?: string;
+}) {
+  return (
+    <div className="stack-lg" role="status" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      <div className="skeleton-head" aria-hidden="true">
+        <span className="skeleton" style={{ width: 78, height: 9 }} />
+        <span className="skeleton" style={{ width: 196, height: 24 }} />
+        <span className="skeleton" style={{ width: 300, height: 10 }} />
+      </div>
+      <div className="list-panel" aria-hidden="true">
+        <div className="toolbar">
+          <span className="skeleton" style={{ width: 210 }} />
+          <span className="skeleton" style={{ width: 140 }} />
+          <span className="skeleton" style={{ width: 140 }} />
+        </div>
+        <div className="table-wrap">
+          <table>
+            <tbody>
+              <SkeletonRows cols={cols} rows={rows} />
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function DetailSkeleton({ label = "Loading" }: { label?: string }) {
+  return (
+    <div className="stack-lg" role="status" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      <div className="skeleton-head" aria-hidden="true">
+        <span className="skeleton" style={{ width: 92, height: 9 }} />
+        <span className="skeleton" style={{ width: 320, height: 24 }} />
+        <span className="skeleton" style={{ width: 230, height: 10 }} />
+      </div>
+      <div className="detail-grid" aria-hidden="true">
+        <div className="skeleton-panel">
+          <div className="skeleton-stack">
+            <span className="skeleton" style={{ width: "42%" }} />
+            <span className="skeleton" style={{ width: "88%" }} />
+            <span className="skeleton" style={{ width: "76%" }} />
+            <span className="skeleton" style={{ width: "64%" }} />
+            <span className="skeleton" style={{ width: "82%" }} />
+          </div>
+        </div>
+        <div className="skeleton-panel">
+          <div className="skeleton-stack">
+            <span className="skeleton" style={{ width: "55%" }} />
+            <span className="skeleton" style={{ width: "80%" }} />
+            <span className="skeleton" style={{ width: "70%" }} />
+            <span className="skeleton" style={{ width: "46%" }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatChartDay(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
+}
+
+export function TrendChart({ points }: { points: ReportTrendPoint[] }) {
+  if (points.length === 0) return <EmptyState title="No activity in this period" />;
+  const max = Math.max(1, ...points.map((point) => Math.max(point.created, point.resolved)));
+  const x = (index: number) => (points.length === 1 ? 50 : (index / (points.length - 1)) * 100);
+  const y = (value: number) => 40 - (value / max) * 36;
+  const line = (key: "created" | "resolved") =>
+    points.map((point, index) => `${x(index)},${y(point[key])}`).join(" ");
+
+  return (
+    <div className="trend-chart">
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Tickets created and resolved over time">
+        {[4, 13, 22, 31].map((gridY) => (
+          <line key={gridY} x1="0" y1={gridY} x2="100" y2={gridY} className="chart-grid" />
+        ))}
+        <line x1="0" y1="40" x2="100" y2="40" className="chart-axis" />
+        <polyline points={line("created")} className="chart-line created" />
+        <polyline points={line("resolved")} className="chart-line resolved" />
+      </svg>
+      <div className="chart-legend">
+        <span><i className="chart-dot created" /> Created</span>
+        <span><i className="chart-dot resolved" /> Resolved</span>
+        <span className="muted">{formatChartDay(points[0]?.day ?? "")} to {formatChartDay(points[points.length - 1]?.day ?? "")}</span>
+      </div>
     </div>
   );
 }

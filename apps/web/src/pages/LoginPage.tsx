@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { errorMessage } from "../api.js";
 import { useAuth } from "../auth.js";
+import { BrandMark } from "../ui.js";
 
 const DEMO_ACCOUNTS = [
   { label: "Acme agent", email: "agent@acme.test", hint: "queue, assignment, lifecycle" },
@@ -45,7 +46,7 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <section className="login-hero">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         <p className="eyebrow">Multi-tenant service desk</p>
         <h1>Support work, without the noise.</h1>
         <p>

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { errorMessage, post } from "../api.js";
 import { ErrorAlert } from "../components.js";
+import { BrandMark } from "../ui.js";
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -26,7 +27,7 @@ export function ForgotPasswordPage() {
   return (
     <div className="center-page">
       <div className="card narrow">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         <p className="eyebrow">Account recovery</p>
         <h1>Reset password</h1>
         {sent ? (
@@ -90,7 +91,7 @@ export function ResetPasswordPage() {
   return (
     <div className="center-page">
       <div className="card narrow">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         <p className="eyebrow">Account recovery</p>
         <h1>Choose a new password</h1>
         {!token ? (

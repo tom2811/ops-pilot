@@ -10,7 +10,7 @@ import {
 } from "@opspilot/core";
 import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
-import { badRequest } from "../errors.js";
+import { AppError, badRequest } from "../errors.js";
 import { previewRoute } from "../domain/routing.js";
 import {
   addComment,
@@ -27,6 +27,9 @@ const ticketParams = z.object({ tenantSlug: z.string().min(1), ticketId: z.strin
 const listQuery = z.object({
   status: z.string().optional(),
   priority: z.string().optional(),
+  assignee: z.enum(["me", "none"]).optional(),
+  state: z.enum(["open", "closed"]).optional(),
+  sort: z.enum(["priority", "updated"]).default("priority"),
   q: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(25),
@@ -40,6 +43,21 @@ function context(req: {
   return { userId: req.authUser.id, tenantId: req.tenant.id, role: req.tenant.role };
 }
 
+function formatCsvDate(val: unknown): string {
+  if (!val) return "";
+  if (val instanceof Date) return val.toISOString();
+  return String(val);
+}
+
+function escapeCsv(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const str = value instanceof Date ? value.toISOString() : String(value);
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replaceAll('"', '""')}"`;
+  }
+  return str;
+}
+
 export async function ticketRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
   app.addHook("preHandler", requireTenant);
@@ -51,11 +69,77 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
       const { items, total } = await listTickets(client, tenantId, userId, role, {
         status: query.status,
         priority: query.priority,
+        assignee: query.assignee,
+        state: query.state,
+        sort: query.sort,
         q: query.q,
         limit: query.pageSize,
         offset: (query.page - 1) * query.pageSize,
       });
       return { items, total, page: query.page, pageSize: query.pageSize };
+    });
+  });
+
+  app.get("/t/:tenantSlug/tickets/export", async (req, reply) => {
+    const { userId, tenantId, role } = context(req);
+    if (role === "employee") {
+      throw new AppError(403, "Ticket export requires agent or administrator role");
+    }
+    const query = listQuery.omit({ page: true, pageSize: true }).parse(req.query);
+    return withTenant(tenantId, userId, async (client) => {
+      const { items } = await listTickets(client, tenantId, userId, role, {
+        status: query.status,
+        priority: query.priority,
+        assignee: query.assignee,
+        state: query.state,
+        sort: query.sort,
+        q: query.q,
+        limit: 5000,
+        offset: 0,
+      });
+
+      const headers = [
+        "Ticket Number",
+        "Subject",
+        "Status",
+        "Priority",
+        "Category",
+        "Requester",
+        "Assignee",
+        "Team",
+        "SLA Response Due",
+        "SLA Resolution Due",
+        "Created At",
+        "Updated At",
+        "Resolved At",
+      ];
+
+      const rows = [headers.join(",")];
+      for (const t of items) {
+        rows.push(
+          [
+            escapeCsv(t.number),
+            escapeCsv(t.subject),
+            escapeCsv(t.status_label),
+            escapeCsv(t.priority_label),
+            escapeCsv(t.category_name),
+            escapeCsv(t.requester_name),
+            escapeCsv(t.assignee_name || "Unassigned"),
+            escapeCsv(t.team_name || "None"),
+            escapeCsv(formatCsvDate(t.sla_response_due_at)),
+            escapeCsv(formatCsvDate(t.sla_resolution_due_at)),
+            escapeCsv(formatCsvDate(t.created_at)),
+            escapeCsv(formatCsvDate(t.updated_at)),
+            escapeCsv(formatCsvDate(t.resolved_at)),
+          ].join(","),
+        );
+      }
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `tickets-${req.tenant?.slug ?? "export"}-${dateStr}.csv`;
+      reply.type("text/csv; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      return reply.send(rows.join("\r\n"));
     });
   });
 

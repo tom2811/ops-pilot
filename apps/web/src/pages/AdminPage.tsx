@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { api, del, errorMessage, humanize, patch, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { EmptyState, ErrorAlert, PageHeader, PageSkeleton } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
 import type {
   Category,
@@ -130,7 +130,7 @@ export function AdminPage() {
     );
   }
 
-  if (!config) return <Spinner label="Loading configuration…" />;
+  if (!config) return <PageSkeleton rows={5} cols={4} label="Loading configuration" />;
 
   async function run(action: () => Promise<unknown>, message: string): Promise<void> {
     setBusy(true);
@@ -366,7 +366,7 @@ export function AdminPage() {
 
       <section className="card">
         <h2>Workspace settings</h2>
-        <form className="inline-form" onSubmit={submitSettings}>
+        <form className="form-grid" onSubmit={submitSettings}>
           <label>
             Timezone
             <input value={settingsTimezone} onChange={(event) => setSettingsTimezone(event.target.value)} required />
@@ -400,462 +400,470 @@ export function AdminPage() {
               required
             />
           </label>
-          <button className="button secondary" disabled={busy}>
-            Save settings
-          </button>
+          <div className="form-actions span-2">
+            <button className="button secondary" disabled={busy}>
+              Save settings
+            </button>
+          </div>
         </form>
       </section>
 
-      <div className="admin-grid">
-        <section className="card">
-          <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
-          <form className="stack" onSubmit={submitTeam}>
-            <label>
-              Name
-              <input
-                value={teamName}
-                onChange={(event) => {
-                  setTeamName(event.target.value);
-                  setTeamSlug(slugify(event.target.value));
-                }}
-                required
-              />
-            </label>
-            <label>
-              Slug
-              <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
-            </label>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingTeamId ? "Update team" : "Create team"}
-              </button>
-              {editingTeamId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); }}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        </section>
-
-        <section className="card">
-          <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
-          <form className="stack" onSubmit={submitCategory}>
-            <label>
-              Name
-              <input
-                value={categoryName}
-                onChange={(event) => {
-                  setCategoryName(event.target.value);
-                  setCategorySlug(slugify(event.target.value));
-                }}
-                required
-              />
-            </label>
-            <label>
-              Slug
-              <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
-            </label>
-            <label>
-              Default team
-              <Select
-                ariaLabel="Default team"
-                value={categoryTeam}
-                onChange={setCategoryTeam}
-                options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-              />
-            </label>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingCategoryId ? "Update category" : "Create category"}
-              </button>
-              {editingCategoryId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        </section>
-
-        <section className="card">
-          <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
-          <form className="stack" onSubmit={submitPriority}>
-            <label>
-              Label
-              <input
-                value={priorityLabel}
-                onChange={(event) => {
-                  setPriorityLabel(event.target.value);
-                  setPriorityKey(slugify(event.target.value));
-                }}
-                required
-              />
-            </label>
-            <div className="inline-fields">
+      <div className="admin-columns">
+        <div className="admin-col">
+          <section className="card">
+            <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
+            <form className="form-grid" onSubmit={submitTeam}>
               <label>
-                Key
-                <input value={priorityKey} onChange={(event) => setPriorityKey(event.target.value)} required />
-              </label>
-              <label>
-                Rank
+                Name
                 <input
-                  type="number"
-                  min={1}
-                  value={priorityRank}
-                  onChange={(event) => setPriorityRank(event.target.value)}
+                  value={teamName}
+                  onChange={(event) => {
+                    setTeamName(event.target.value);
+                    setTeamSlug(slugify(event.target.value));
+                  }}
                   required
                 />
               </label>
               <label>
-                Color
-                <Select
-                  ariaLabel="Color"
-                  value={priorityColor}
-                  onChange={setPriorityColor}
-                  options={[
-                    { value: "red", label: "Red" },
-                    { value: "orange", label: "Orange" },
-                    { value: "blue", label: "Blue" },
-                    { value: "green", label: "Green" },
-                    { value: "gray", label: "Gray" },
-                  ]}
-                />
+                Slug
+                <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
               </label>
-            </div>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingPriorityId ? "Update priority" : "Create priority"}
-              </button>
-              {editingPriorityId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingPriorityId(""); setPriorityLabel(""); setPriorityKey(""); }}>
-                  Cancel
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingTeamId ? "Update team" : "Create team"}
                 </button>
-              )}
-            </div>
-          </form>
-        </section>
+                {editingTeamId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
 
-        <section className="card">
-          <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
-          <form className="stack" onSubmit={submitSla}>
-            <label>
-              Name
-              <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
-            </label>
-            <div className="inline-fields">
+          <section className="card">
+            <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
+            <form className="form-grid" onSubmit={submitPriority}>
+              <label className="span-2">
+                Label
+                <input
+                  value={priorityLabel}
+                  onChange={(event) => {
+                    setPriorityLabel(event.target.value);
+                    setPriorityKey(slugify(event.target.value));
+                  }}
+                  required
+                />
+              </label>
+              <div className="inline-fields span-2">
+                <label>
+                  Key
+                  <input value={priorityKey} onChange={(event) => setPriorityKey(event.target.value)} required />
+                </label>
+                <label>
+                  Rank
+                  <input
+                    type="number"
+                    min={1}
+                    value={priorityRank}
+                    onChange={(event) => setPriorityRank(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Color
+                  <Select
+                    ariaLabel="Color"
+                    value={priorityColor}
+                    onChange={setPriorityColor}
+                    options={[
+                      { value: "red", label: "Red" },
+                      { value: "orange", label: "Orange" },
+                      { value: "blue", label: "Blue" },
+                      { value: "green", label: "Green" },
+                      { value: "gray", label: "Gray" },
+                    ]}
+                  />
+                </label>
+              </div>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingPriorityId ? "Update priority" : "Create priority"}
+                </button>
+                {editingPriorityId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingPriorityId(""); setPriorityLabel(""); setPriorityKey(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <section className="card">
+            <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
+            <form className="form-grid" onSubmit={submitField}>
               <label>
-                Priority
-                <Select
-                  ariaLabel="SLA priority"
-                  value={slaPriority}
-                  onChange={setSlaPriority}
-                  options={[
-                    { value: "", label: "All priorities" },
-                    ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
-                  ]}
+                Label
+                <input
+                  value={fieldLabel}
+                  onChange={(event) => {
+                    setFieldLabel(event.target.value);
+                    setFieldKeyValue(fieldKey(event.target.value));
+                  }}
+                  required
                 />
               </label>
               <label>
-                Category
+                Key
+                <input value={fieldKeyValue} onChange={(event) => setFieldKeyValue(event.target.value)} required />
+              </label>
+              <div className="inline-fields span-2">
+                <label>
+                  Type
+                  <Select
+                    ariaLabel="Custom field type"
+                    value={fieldType}
+                    onChange={setFieldType}
+                    options={["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => ({
+                      value: type,
+                      label: humanize(type),
+                    }))}
+                  />
+                </label>
+                <label>
+                  Visibility
+                  <Select
+                    ariaLabel="Custom field visibility"
+                    value={fieldVisibility}
+                    onChange={setFieldVisibility}
+                    options={[
+                      { value: "internal", label: "Internal" },
+                      { value: "public", label: "Public" },
+                    ]}
+                  />
+                </label>
+              </div>
+              {(fieldType === "select" || fieldType === "multiselect") && (
+                <label className="span-2">
+                  Options (comma separated)
+                  <input value={fieldOptions} onChange={(event) => setFieldOptions(event.target.value)} required />
+                </label>
+              )}
+              <label className="span-2">
+                Applies to category
                 <Select
-                  ariaLabel="SLA category"
-                  value={slaCategory}
-                  onChange={setSlaCategory}
+                  ariaLabel="Applies to category"
+                  value={fieldCategory}
+                  onChange={setFieldCategory}
                   options={[
                     { value: "", label: "All categories" },
                     ...config.categories.map((category) => ({ value: category.id, label: category.name })),
                   ]}
                 />
               </label>
-            </div>
-            <div className="inline-fields">
+              <label className="check-row span-2">
+                <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
+                Required
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingFieldId ? "Update field" : "Create field"}
+                </button>
+                {editingFieldId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingFieldId(""); setFieldLabel(""); setFieldKeyValue(""); setFieldOptions(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+        </div>
+        <div className="admin-col">
+          <section className="card">
+            <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
+            <form className="form-grid" onSubmit={submitCategory}>
               <label>
-                Response minutes
+                Name
                 <input
-                  type="number"
-                  min={1}
-                  value={slaResponse}
-                  onChange={(event) => setSlaResponse(event.target.value)}
+                  value={categoryName}
+                  onChange={(event) => {
+                    setCategoryName(event.target.value);
+                    setCategorySlug(slugify(event.target.value));
+                  }}
                   required
                 />
               </label>
               <label>
-                Resolution minutes
-                <input
-                  type="number"
-                  min={1}
-                  value={slaResolution}
-                  onChange={(event) => setSlaResolution(event.target.value)}
-                  required
-                />
+                Slug
+                <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
               </label>
-            </div>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
-              </button>
-              {editingSlaId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        </section>
-
-        <section className="card">
-          <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
-          <form className="stack" onSubmit={submitField}>
-            <label>
-              Label
-              <input
-                value={fieldLabel}
-                onChange={(event) => {
-                  setFieldLabel(event.target.value);
-                  setFieldKeyValue(fieldKey(event.target.value));
-                }}
-                required
-              />
-            </label>
-            <label>
-              Key
-              <input value={fieldKeyValue} onChange={(event) => setFieldKeyValue(event.target.value)} required />
-            </label>
-            <div className="inline-fields">
-              <label>
-                Type
+              <label className="span-2">
+                Default team
                 <Select
-                  ariaLabel="Custom field type"
-                  value={fieldType}
-                  onChange={setFieldType}
-                  options={["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => ({
-                    value: type,
-                    label: humanize(type),
-                  }))}
+                  ariaLabel="Default team"
+                  value={categoryTeam}
+                  onChange={setCategoryTeam}
+                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
                 />
               </label>
-              <label>
-                Visibility
-                <Select
-                  ariaLabel="Custom field visibility"
-                  value={fieldVisibility}
-                  onChange={setFieldVisibility}
-                  options={[
-                    { value: "internal", label: "Internal" },
-                    { value: "public", label: "Public" },
-                  ]}
-                />
-              </label>
-            </div>
-            {(fieldType === "select" || fieldType === "multiselect") && (
-              <label>
-                Options (comma separated)
-                <input value={fieldOptions} onChange={(event) => setFieldOptions(event.target.value)} required />
-              </label>
-            )}
-            <label>
-              Applies to category
-              <Select
-                ariaLabel="Applies to category"
-                value={fieldCategory}
-                onChange={setFieldCategory}
-                options={[
-                  { value: "", label: "All categories" },
-                  ...config.categories.map((category) => ({ value: category.id, label: category.name })),
-                ]}
-              />
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
-              Required
-            </label>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingFieldId ? "Update field" : "Create field"}
-              </button>
-              {editingFieldId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingFieldId(""); setFieldLabel(""); setFieldKeyValue(""); setFieldOptions(""); }}>
-                  Cancel
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingCategoryId ? "Update category" : "Create category"}
                 </button>
-              )}
-            </div>
-          </form>
-        </section>
+                {editingCategoryId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
 
-        <section className="card span-2">
-          <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
-          <p className="muted">
-            Rules run before the category default, and the newest rule wins when two rules are equally specific. This
-            builder creates a single category condition; the API accepts combined priority and custom-field conditions
-            too.
-          </p>
-          <form className="inline-form" onSubmit={submitRule}>
-            <label>
-              Rule name
-              <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
-            </label>
-            <label>
-              When category is
-              <Select
-                ariaLabel="When category is"
-                value={ruleCategory}
-                onChange={setRuleCategory}
-                options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
-              />
-            </label>
-            <label>
-              Route to
-              <Select
-                ariaLabel="Route to"
-                value={ruleTeam}
-                onChange={setRuleTeam}
-                options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-              />
-            </label>
-            <div className="inline-fields">
-              <button className="button secondary" disabled={busy}>
-                {editingRuleId ? "Update rule" : "Create rule"}
-              </button>
-              {editingRuleId && (
-                <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
-                  Cancel
+          <section className="card">
+            <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
+            <form className="form-grid" onSubmit={submitSla}>
+              <label className="span-2">
+                Name
+                <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
+              </label>
+              <div className="inline-fields span-2">
+                <label>
+                  Priority
+                  <Select
+                    ariaLabel="SLA priority"
+                    value={slaPriority}
+                    onChange={setSlaPriority}
+                    options={[
+                      { value: "", label: "All priorities" },
+                      ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
+                    ]}
+                  />
+                </label>
+                <label>
+                  Category
+                  <Select
+                    ariaLabel="SLA category"
+                    value={slaCategory}
+                    onChange={setSlaCategory}
+                    options={[
+                      { value: "", label: "All categories" },
+                      ...config.categories.map((category) => ({ value: category.id, label: category.name })),
+                    ]}
+                  />
+                </label>
+              </div>
+              <div className="inline-fields span-2">
+                <label>
+                  Response minutes
+                  <input
+                    type="number"
+                    min={1}
+                    value={slaResponse}
+                    onChange={(event) => setSlaResponse(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Resolution minutes
+                  <input
+                    type="number"
+                    min={1}
+                    value={slaResolution}
+                    onChange={(event) => setSlaResolution(event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
                 </button>
-              )}
-            </div>
-          </form>
-        </section>
+                {editingSlaId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <section className="card">
+            <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
+            <p className="muted">
+              Rules run before the category default, and the newest rule wins when two rules are equally specific. This
+              builder creates a single category condition; the API accepts combined priority and custom-field conditions
+              too.
+            </p>
+            <form className="form-grid" onSubmit={submitRule}>
+              <label className="span-2">
+                Rule name
+                <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
+              </label>
+              <label>
+                When category is
+                <Select
+                  ariaLabel="When category is"
+                  value={ruleCategory}
+                  onChange={setRuleCategory}
+                  options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+                />
+              </label>
+              <label>
+                Route to
+                <Select
+                  ariaLabel="Route to"
+                  value={ruleTeam}
+                  onChange={setRuleTeam}
+                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+                />
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingRuleId ? "Update rule" : "Create rule"}
+                </button>
+                {editingRuleId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+        </div>
       </div>
 
-      <div className="admin-grid">
-        <section className="card">
-          <h2>Teams</h2>
-          {config.teams.length === 0 ? (
-            <EmptyState title="No teams" />
-          ) : (
+      <div className="admin-columns">
+        <div className="admin-col">
+          <section className="card">
+            <h2>Teams</h2>
+            {config.teams.length === 0 ? (
+              <EmptyState title="No teams" />
+            ) : (
+              <ul className="config-list">
+                {config.teams.map((team) => (
+                  <li key={team.id}>
+                    <div>
+                      <strong>{team.name}</strong>
+                      <span className="muted small">{team.slug}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editTeam(team)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card">
+            <h2>Categories</h2>
             <ul className="config-list">
-              {config.teams.map((team) => (
-                <li key={team.id}>
+              {config.categories.map((category) => (
+                <li key={category.id}>
                   <div>
-                    <strong>{team.name}</strong>
-                    <span className="muted small">{team.slug}</span>
-                  </div>
-                  <ConfigActions
-                    onEdit={() => editTeam(team)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="card">
-          <h2>Categories</h2>
-          <ul className="config-list">
-            {config.categories.map((category) => (
-              <li key={category.id}>
-                <div>
-                  <strong>{category.name}</strong>
-                  <span className="muted small">
-                    {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
-                  </span>
-                </div>
-                <ConfigActions
-                  onEdit={() => editCategory(category)}
-                  onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="card">
-          <h2>Priorities</h2>
-          <ul className="config-list">
-            {config.priorities.map((priority) => (
-              <li key={priority.id}>
-                <div>
-                  <strong>{priority.label}</strong>
-                  <span className="muted small">rank {priority.rank}</span>
-                </div>
-                <ConfigActions
-                  onEdit={() => editPriority(priority)}
-                  onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="card">
-          <h2>SLA policies</h2>
-          {config.sla_policies.length === 0 ? (
-            <EmptyState title="No SLA policies">Create one to add response and resolution targets.</EmptyState>
-          ) : (
-            <ul className="config-list">
-              {config.sla_policies.map((policy) => (
-                <li key={policy.id}>
-                  <div>
-                    <strong>{policy.name}</strong>
+                    <strong>{category.name}</strong>
                     <span className="muted small">
-                      {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
-                      {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
-                      {policy.response_minutes}m / {policy.resolution_minutes}m
+                      {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
                     </span>
                   </div>
                   <ConfigActions
-                    onEdit={() => editSla(policy)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
+                    onEdit={() => editCategory(category)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
                   />
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
 
-        <section className="card">
-          <h2>Custom fields</h2>
-          <ul className="config-list">
-            {config.custom_fields.map((field) => (
-              <li key={field.id}>
-                <div>
-                  <strong>{field.label}</strong>
-                  <span className="muted small">
-                    {field.type} · {field.visibility}
-                    {field.required ? " · required" : ""}
-                  </span>
-                </div>
-                <ConfigActions
-                  onEdit={() => editField(field)}
-                  onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="card span-2">
-          <h2>Routing rules</h2>
-          {config.routing_rules.length === 0 ? (
-            <EmptyState title="No routing rules">Tickets fall back to the category default team.</EmptyState>
-          ) : (
+          <section className="card">
+            <h2>Priorities</h2>
             <ul className="config-list">
-              {config.routing_rules.map((rule) => (
-                <li key={rule.id}>
+              {config.priorities.map((priority) => (
+                <li key={priority.id}>
                   <div>
-                    <strong>{rule.name}</strong>
-                    <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
+                    <strong>{priority.label}</strong>
+                    <span className="muted small">rank {priority.rank}</span>
                   </div>
                   <ConfigActions
-                    onEdit={() => editRule(rule)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                    onEdit={() => editPriority(priority)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
                   />
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        </div>
+        <div className="admin-col">
+          <section className="card">
+            <h2>SLA policies</h2>
+            {config.sla_policies.length === 0 ? (
+              <EmptyState title="No SLA policies">Create one to add response and resolution targets.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.sla_policies.map((policy) => (
+                  <li key={policy.id}>
+                    <div>
+                      <strong>{policy.name}</strong>
+                      <span className="muted small">
+                        {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
+                        {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
+                        {policy.response_minutes}m / {policy.resolution_minutes}m
+                      </span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editSla(policy)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card">
+            <h2>Custom fields</h2>
+            <ul className="config-list">
+              {config.custom_fields.map((field) => (
+                <li key={field.id}>
+                  <div>
+                    <strong>{field.label}</strong>
+                    <span className="muted small">
+                      {field.type} · {field.visibility}
+                      {field.required ? " · required" : ""}
+                    </span>
+                  </div>
+                  <ConfigActions
+                    onEdit={() => editField(field)}
+                    onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="card">
+            <h2>Routing rules</h2>
+            {config.routing_rules.length === 0 ? (
+              <EmptyState title="No routing rules">Tickets fall back to the category default team.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.routing_rules.map((rule) => (
+                  <li key={rule.id}>
+                    <div>
+                      <strong>{rule.name}</strong>
+                      <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editRule(rule)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
       </div>
 
       <section className="card">

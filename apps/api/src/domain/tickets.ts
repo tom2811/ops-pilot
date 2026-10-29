@@ -162,6 +162,9 @@ export async function assertCanRead(
 export type TicketListInput = {
   status?: string;
   priority?: string;
+  assignee?: "me" | "none";
+  state?: "open" | "closed";
+  sort?: "priority" | "updated";
   q?: string;
   limit: number;
   offset: number;
@@ -200,6 +203,17 @@ export async function listTickets(
     conditions.push(`p.key = $${index++}`);
     params.push(input.priority);
   }
+  if (input.assignee === "me") {
+    conditions.push(`t.assignee_id = $${index++}`);
+    params.push(userId);
+  } else if (input.assignee === "none") {
+    conditions.push("t.assignee_id is null");
+  }
+  if (input.state === "open") {
+    conditions.push("s.stage not in ('resolved', 'closed')");
+  } else if (input.state === "closed") {
+    conditions.push("s.stage in ('resolved', 'closed')");
+  }
   if (input.q) {
     conditions.push(`to_tsvector('simple', t.subject || ' ' || t.description) @@ plainto_tsquery('simple', $${index++})`);
     params.push(input.q);
@@ -208,11 +222,12 @@ export async function listTickets(
   params.push(input.limit, input.offset);
   const limitIndex = index;
   const offsetIndex = index + 1;
+  const orderBy = input.sort === "updated" ? "t.updated_at desc" : "p.rank asc, t.created_at desc";
 
   const result = await client.query<TicketListRow>(
     `${ticketListSelect}
      where ${conditions.join(" and ")}
-     order by p.rank asc, t.created_at desc
+     order by ${orderBy}
      limit $${limitIndex} offset $${offsetIndex}`,
     params,
   );

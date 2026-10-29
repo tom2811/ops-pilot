@@ -1,10 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useId, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatTicketNumber } from "@opspilot/core";
-import { api, errorMessage, formatDate, post } from "../api.js";
+import { api, downloadFile, errorMessage, formatDate, post, triggerDownload } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
-import { Select, useToast } from "../ui.js";
+import { EmptyState, ErrorAlert, PageHeader, Pager, PriorityBadge, SkeletonRows, SlaBadge, StatusBadge } from "../components.js";
+import { Icon, Sheet, Select, useToast } from "../ui.js";
 import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
@@ -101,15 +101,18 @@ export function CustomFieldInput({
   );
 }
 
-function CreateTicketForm({
+function NewTicketSheet({
   tenantSlug,
   config,
+  onClose,
   onCreated,
 }: {
   tenantSlug: string;
   config: Config;
+  onClose: () => void;
   onCreated: (ticket: Ticket) => void;
 }) {
+  const formId = useId();
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState(config.categories[0]?.id ?? "");
@@ -169,78 +172,93 @@ function CreateTicketForm({
   }
 
   return (
-    <form className="card form-card" onSubmit={(event) => void submit(event)}>
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">New request</p>
-          <h2>Open a ticket</h2>
+    <Sheet
+      open
+      onClose={onClose}
+      eyebrow="New request"
+      title="Open a ticket"
+      description="Routing is picked from the category and details, so you land with the right team."
+      footer={
+        <>
+          <button type="button" className="button ghost" onClick={() => void preview()} disabled={busy}>
+            Preview routing
+          </button>
+          <span className="toolbar-spacer" />
+          <button type="button" className="button secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" form={formId} className="button" disabled={busy}>
+            {busy ? "Creating…" : "Create ticket"}
+          </button>
+        </>
+      }
+    >
+      <form id={formId} className="form-stack" onSubmit={(event) => void submit(event)}>
+        <ErrorAlert message={error} />
+        <div className="form-grid">
+          <label className="span-2">
+            Subject
+            <input
+              data-autofocus
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+              maxLength={200}
+              placeholder="Short summary of the problem"
+              required
+            />
+          </label>
+          <label className="span-2">
+            Description
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={5}
+              maxLength={20000}
+              placeholder="What happened, and what have you already tried?"
+              required
+            />
+          </label>
+          <label>
+            Category
+            <Select
+              ariaLabel="Category"
+              value={categoryId}
+              onChange={(next) => {
+                setCategoryId(next);
+                setRoute(null);
+              }}
+              options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+            />
+          </label>
+          <label>
+            Priority
+            <Select
+              ariaLabel="Priority"
+              value={priorityId}
+              onChange={(next) => {
+                setPriorityId(next);
+                setRoute(null);
+              }}
+              options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
+            />
+          </label>
+          {fields.map((field) => (
+            <CustomFieldInput
+              key={field.id}
+              field={field}
+              value={customFields[field.key]}
+              onChange={(value) => setField(field.key, value)}
+            />
+          ))}
         </div>
-      </div>
-      <ErrorAlert message={error} />
-      <div className="form-grid">
-        <label className="span-2">
-          Subject
-          <input value={subject} onChange={(event) => setSubject(event.target.value)} maxLength={200} required />
-        </label>
-        <label className="span-2">
-          Description
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            rows={5}
-            maxLength={20000}
-            required
-          />
-        </label>
-        <label>
-          Category
-          <Select
-            ariaLabel="Category"
-            value={categoryId}
-            onChange={(next) => {
-              setCategoryId(next);
-              setRoute(null);
-            }}
-            options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
-          />
-        </label>
-        <label>
-          Priority
-          <Select
-            ariaLabel="Priority"
-            value={priorityId}
-            onChange={(next) => {
-              setPriorityId(next);
-              setRoute(null);
-            }}
-            options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
-          />
-        </label>
-        {fields.map((field) => (
-          <CustomFieldInput
-            key={field.id}
-            field={field}
-            value={customFields[field.key]}
-            onChange={(value) => setField(field.key, value)}
-          />
-        ))}
-      </div>
-
-      <div className="form-footer">
-        <button type="button" className="button secondary" onClick={() => void preview()}>
-          Preview routing
-        </button>
-        <button type="submit" className="button" disabled={busy}>
-          {busy ? "Creating…" : "Create ticket"}
-        </button>
-      </div>
-      {route && (
-        <div className="route-preview">
-          <strong>{route.teamName}</strong>
-          <span>{route.explanation}</span>
-        </div>
-      )}
-    </form>
+        {route && (
+          <div className="route-preview">
+            <strong>{route.teamName}</strong>
+            <span>{route.explanation}</span>
+          </div>
+        )}
+      </form>
+    </Sheet>
   );
 }
 
@@ -249,6 +267,7 @@ export function TicketsPage() {
   const { memberships } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const role = memberships.find((item) => item.slug === tenantSlug)?.role ?? "employee";
 
   const [config, setConfig] = useState<Config | null>(null);
@@ -260,8 +279,17 @@ export function TicketsPage() {
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(() => searchParams.get("new") === "1");
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    setShowCreate(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     setConfig(null);
@@ -299,14 +327,71 @@ export function TicketsPage() {
   const priorities = new Map(config?.priorities.map((item) => [item.key, item]) ?? []);
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.pageSize ?? 25)));
 
+  async function handleExport(): Promise<void> {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (status) params.set("status", status);
+      if (priority) params.set("priority", priority);
+      if (q) params.set("q", q);
+      const queryStr = params.toString() ? `?${params.toString()}` : "";
+
+      try {
+        await downloadFile(`/t/${tenantSlug}/tickets/export${queryStr}`, `tickets-${tenantSlug}.csv`);
+      } catch (apiErr) {
+        // Fallback: If backend endpoint is unavailable (e.g. before API rebuild),
+        // export currently loaded tickets directly so the user is never blocked.
+        if (data && data.items.length > 0) {
+          const headers = [
+            "Ticket Number",
+            "Subject",
+            "Status",
+            "Priority",
+            "Category",
+            "Requester",
+            "Assignee",
+            "Team",
+            "Updated At",
+          ];
+          const rows = [headers.join(",")];
+          for (const t of data.items) {
+            rows.push(
+              [
+                `"${formatTicketNumber(prefix, t.number)}"`,
+                `"${(t.subject || "").replaceAll('"', '""')}"`,
+                `"${(t.status_label || "").replaceAll('"', '""')}"`,
+                `"${(t.priority_label || "").replaceAll('"', '""')}"`,
+                `"${(t.category_name || "").replaceAll('"', '""')}"`,
+                `"${(t.requester_name || "").replaceAll('"', '""')}"`,
+                `"${(t.assignee_name || "Unassigned").replaceAll('"', '""')}"`,
+                `"${(t.team_name || "None").replaceAll('"', '""')}"`,
+                `"${formatDate(t.updated_at)}"`,
+              ].join(","),
+            );
+          }
+          const dateStr = new Date().toISOString().slice(0, 10);
+          triggerDownload(rows.join("\r\n"), `tickets-${tenantSlug}-${dateStr}.csv`);
+        } else {
+          throw apiErr;
+        }
+      }
+      toast.success("Export prepared", "Preparing ticket CSV for download.");
+    } catch (caught) {
+      toast.error("Export failed", errorMessage(caught));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="stack-lg">
       <PageHeader
         eyebrow={config?.settings ? `${config.settings.ticket_prefix} workspace` : "Workspace"}
         title="Tickets"
         actions={
-          <button className="button" onClick={() => setShowCreate((current) => !current)}>
-            {showCreate ? "Close form" : "New ticket"}
+          <button className="button" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" className="icon-sm" />
+            New ticket
           </button>
         }
       >
@@ -320,20 +405,23 @@ export function TicketsPage() {
       <ErrorAlert message={error} />
 
       {showCreate && config && (
-        <CreateTicketForm
+        <NewTicketSheet
           tenantSlug={tenantSlug}
           config={config}
+          onClose={() => setShowCreate(false)}
           onCreated={(ticket) => {
+            setShowCreate(false);
             toast.success("Ticket opened", formatTicketNumber(prefix, ticket.number));
             navigate(`/t/${tenantSlug}/tickets/${ticket.id}`);
           }}
         />
       )}
 
-      <section className="card">
-        <div className="filter-bar">
+      <section className="list-panel">
+        <div className="toolbar">
           <input
             placeholder="Search tickets"
+            aria-label="Search tickets"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
@@ -390,16 +478,57 @@ export function TicketsPage() {
               Clear
             </button>
           )}
+          <span className="toolbar-spacer" />
+          {role !== "employee" && (
+            <button
+              type="button"
+              className="button secondary small"
+              onClick={() => void handleExport()}
+              disabled={exporting}
+              aria-label="Export tickets to CSV"
+              title="Export filtered tickets to CSV"
+            >
+              <Icon name="download" className="icon-sm" />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Refresh tickets"
+            title="Refresh"
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            <Icon name="refresh" />
+          </button>
         </div>
 
         {loading && !data ? (
-          <EmptyState title="Loading tickets…" />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Subject</th>
+                  <th className="col-status">Status</th>
+                  <th className="col-priority">Priority</th>
+                  <th className="col-requester">Requester</th>
+                  <th className="col-owner">Owner</th>
+                  <th className="col-sla">SLA</th>
+                  <th className="col-updated">Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                <SkeletonRows cols={8} />
+              </tbody>
+            </table>
+          </div>
         ) : data && data.items.length === 0 ? (
           <EmptyState title="No tickets match">
             {role === "employee" ? "Open a ticket when you need help." : "Try clearing the filters."}
           </EmptyState>
         ) : (
-          <div className="table-wrap">
+          <div className={`table-wrap${loading ? " is-refreshing" : ""}`.trim()}>
             <table>
               <thead>
                 <tr>
@@ -454,7 +583,7 @@ export function TicketsPage() {
                             state={new Date(slaDue).getTime() < Date.now() ? "overdue" : "active"}
                           />
                         ) : (
-                          <span className="muted small">–</span>
+                          <span className="muted small">-</span>
                         )}
                       </td>
                       <td className="col-updated nowrap muted">{formatDate(ticket.updated_at)}</td>
@@ -467,32 +596,11 @@ export function TicketsPage() {
         )}
 
         {data && (
-          <div className="pagination">
+          <div className="list-foot">
             <span className="muted small">
               {data.total} ticket{data.total === 1 ? "" : "s"}
             </span>
-            <div className="pagination-actions">
-              <button
-                className="button ghost small"
-                disabled={page <= 1}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                Previous
-              </button>
-              <span className="muted small">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                className="button ghost small"
-                disabled={page >= totalPages}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Next
-              </button>
-              <button className="button ghost small" onClick={() => setRefresh((value) => value + 1)}>
-                Refresh
-              </button>
-            </div>
+            <Pager page={page} totalPages={totalPages} onChange={setPage} />
           </div>
         )}
       </section>

@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, errorMessage, formatDate, patch, post } from "../api.js";
+import { api, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { EmptyState, ErrorAlert, PageHeader, PageSkeleton } from "../components.js";
 import { useToast } from "../ui.js";
 import type { PlatformTenant } from "../types.js";
 
@@ -45,7 +45,7 @@ export function PlatformPage() {
     };
   }, [user, refresh]);
 
-  if (loading) return <Spinner />;
+  if (loading) return <PageSkeleton rows={4} cols={4} label="Loading platform" />;
   if (!user) {
     return (
       <div className="account-page">
@@ -132,7 +132,7 @@ export function PlatformPage() {
       <div className="admin-grid">
         <section className="card">
           <div className="section-heading"><h2>New workspace</h2></div>
-          <form className="stack" onSubmit={(event) => void createTenant(event)}>
+          <form className="form-grid" onSubmit={(event) => void createTenant(event)}>
             <label>
               Workspace name
               <input
@@ -153,7 +153,7 @@ export function PlatformPage() {
                 required
               />
             </label>
-            <label>
+            <label className="span-2">
               Administrator email
               <input
                 type="email"
@@ -162,7 +162,9 @@ export function PlatformPage() {
                 required
               />
             </label>
-            <button className="button" disabled={busy} type="submit">Create workspace</button>
+            <div className="form-actions span-2">
+              <button className="button" disabled={busy} type="submit">Create workspace</button>
+            </div>
           </form>
           <p className="muted small">
             Default teams, categories, priorities, lifecycle, SLA policies, email templates, and routing are provisioned automatically.
@@ -172,7 +174,14 @@ export function PlatformPage() {
         <section className="card">
           <div className="section-heading"><h2>Portfolio</h2></div>
           {loadingTenants ? (
-            <Spinner label="Loading workspaces…" />
+            <div className="platform-stats" aria-hidden="true">
+              {[0, 1, 2, 3].map((index) => (
+                <div key={index}>
+                  <span className="skeleton" style={{ width: 42, height: 20 }} />
+                  <span className="skeleton" style={{ width: 72, marginTop: 8 }} />
+                </div>
+              ))}
+            </div>
           ) : tenants.length === 0 ? (
             <EmptyState title="No workspaces yet" />
           ) : (
@@ -186,8 +195,8 @@ export function PlatformPage() {
         </section>
       </div>
 
-      <section className="card" style={{ marginTop: "1.25rem" }}>
-        <div className="section-heading"><h2>All workspaces</h2></div>
+      <section className="list-panel">
+        <div className="panel-head"><h2>All workspaces</h2></div>
         <div className="table-wrap">
           <table className="platform-table">
             <thead>
@@ -202,7 +211,7 @@ export function PlatformPage() {
                     <strong>{tenant.name}</strong>
                     <div className="muted small">/{tenant.slug}</div>
                   </td>
-                  <td><span className={`badge status-${tenant.status === "active" ? "open" : "closed"}`}>{tenant.status}</span></td>
+                  <td><span className={`badge status-${tenant.status === "active" ? "open" : "closed"}`}>{humanize(tenant.status)}</span></td>
                   <td className="col-people">{tenant.member_count}</td>
                   <td className="col-tickets">{tenant.ticket_count}</td>
                   <td className="col-invites">{tenant.pending_invitations}</td>

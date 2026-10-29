@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api, del, errorMessage, formatDate, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { DetailSkeleton, EmptyState, ErrorAlert, PageHeader } from "../components.js";
 import { useToast } from "../ui.js";
 import type { SessionInfo } from "../types.js";
 
@@ -35,7 +35,7 @@ export function AccountPage() {
     };
   }, [user, refresh]);
 
-  if (loading) return <Spinner />;
+  if (loading) return <DetailSkeleton label="Loading account" />;
   if (!user) return <Navigate to="/login" replace />;
 
   async function changePassword(event: FormEvent): Promise<void> {
@@ -129,7 +129,14 @@ export function AccountPage() {
             </button>
           </div>
           {sessionsLoading ? (
-            <Spinner label="Loading sessions…" />
+            <div className="skeleton-stack" aria-hidden="true">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="session-skeleton">
+                  <span className="skeleton" style={{ width: "46%" }} />
+                  <span className="skeleton" style={{ width: "68%", height: 8 }} />
+                </div>
+              ))}
+            </div>
           ) : sessions.length === 0 ? (
             <EmptyState title="No sessions" />
           ) : (

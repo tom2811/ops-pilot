@@ -93,9 +93,50 @@ const ICONS = {
     </>
   ),
   arrowLeft: <path d="M19 12H5m0 0 6-6m-6 6 6 6" />,
+  sidebar: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M9.5 4.5v15" />
+      <path d="m15.5 9.5-3 2.5 3 2.5" />
+    </>
+  ),
+  chevronLeft: <path d="m14 6-6 6 6 6" />,
+  chevronRight: <path d="m10 6 6 6-6 6" />,
+  refresh: (
+    <>
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+      <path d="M20 5v6h-6" />
+    </>
+  ),
+  overview: (
+    <>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof ICONS;
+
+export function BrandMark({ small = false }: { small?: boolean }) {
+  return (
+    <span className={`brand-mark${small ? " small" : ""}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round">
+        <circle cx="9" cy="12" r="5" />
+        <path d="M16 17V7h2.6a3.4 3.4 0 0 1 0 6.8H16" />
+      </svg>
+    </span>
+  );
+}
 
 export function Icon({
   name,
@@ -390,11 +431,13 @@ export function Select({
 export function Menu({
   label,
   ariaLabel,
+  triggerTitle,
   triggerClassName = "icon-btn",
   children,
 }: {
   label: ReactNode;
   ariaLabel?: string;
+  triggerTitle?: string;
   triggerClassName?: string;
   children: ReactNode | ((close: () => void) => ReactNode);
 }) {
@@ -424,6 +467,7 @@ export function Menu({
         type="button"
         className={triggerClassName}
         aria-label={ariaLabel}
+        title={triggerTitle}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
@@ -436,6 +480,108 @@ export function Menu({
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Sheet                                                               */
+/* ------------------------------------------------------------------ */
+
+export function Sheet({
+  open,
+  onClose,
+  eyebrow,
+  title,
+  description,
+  footer,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  eyebrow?: string;
+  title: string;
+  description?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const focusables = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+        ) ?? [],
+      ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
+
+    const initial = panel?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0];
+    (initial ?? panel)?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) {
+        event.preventDefault();
+        panel?.focus();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    document.body.classList.add("sheet-open");
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.classList.remove("sheet-open");
+      previousFocus?.focus();
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div className="sheet-layer">
+      <div
+        className="sheet-scrim"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose();
+        }}
+      />
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={panelRef} tabIndex={-1}>
+        <header className="sheet-head">
+          <div>
+            {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+            <h2 id={titleId}>{title}</h2>
+            {description && <p className="sheet-desc">{description}</p>}
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            <Icon name="x" />
+          </button>
+        </header>
+        <div className="sheet-body">{children}</div>
+        {footer && <footer className="sheet-foot">{footer}</footer>}
+      </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -1,60 +1,25 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, errorMessage, formatDate, humanize } from "../api.js";
+import { api, errorMessage, formatDate, humanize, triggerDownload } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
-import { Select } from "../ui.js";
-import type { Report, ReportTrendPoint } from "../types.js";
+import { EmptyState, ErrorAlert, PageHeader, TrendChart } from "../components.js";
+import { Icon, Select, useToast } from "../ui.js";
+import type { Report } from "../types.js";
 
 const PERIODS = [7, 30, 90, 365];
 
 function formatHours(value: number): string {
-  if (!value) return "–";
+  if (!value) return "-";
   if (value < 1) return `${Math.round(value * 60)}m`;
   if (value < 48) return `${value.toFixed(1)}h`;
   return `${(value / 24).toFixed(1)}d`;
 }
 
 function formatMinutes(value: number): string {
-  if (!value) return "–";
+  if (!value) return "-";
   if (value < 60) return `${Math.round(value)}m`;
   return `${(value / 60).toFixed(1)}h`;
 }
-
-function TrendChart({ points }: { points: ReportTrendPoint[] }) {
-  if (points.length === 0) return <EmptyState title="No activity in this period" />;
-  const max = Math.max(1, ...points.map((point) => Math.max(point.created, point.resolved)));
-  const x = (index: number) => (points.length === 1 ? 50 : (index / (points.length - 1)) * 100);
-  const y = (value: number) => 40 - (value / max) * 36;
-  const line = (key: "created" | "resolved") =>
-    points.map((point, index) => `${x(index)},${y(point[key])}`).join(" ");
-
-  return (
-    <div className="trend-chart">
-      <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Tickets created and resolved over time">
-        {[4, 13, 22, 31].map((y) => (
-          <line key={y} x1="0" y1={y} x2="100" y2={y} className="chart-grid" />
-        ))}
-        <line x1="0" y1="40" x2="100" y2="40" className="chart-axis" />
-        <polyline points={line("created")} className="chart-line created" />
-        <polyline points={line("resolved")} className="chart-line resolved" />
-      </svg>
-      <div className="chart-legend">
-        <span><i className="chart-dot created" /> Created</span>
-        <span><i className="chart-dot resolved" /> Resolved</span>
-        <span className="muted">{points[0]?.day} → {points[points.length - 1]?.day}</span>
-      </div>
-    </div>
-  );
-}
-
-const BAR_COLORS: Record<string, string> = {
-  red: "#d92d20",
-  orange: "#f79009",
-  blue: "#1570ef",
-  green: "#12b76a",
-  gray: "#98a2b3",
-};
 
 function BarList({ items }: { items: { label: string; count: number; color?: string }[] }) {
   if (items.length === 0) return <EmptyState title="Nothing to show" />;
@@ -69,11 +34,8 @@ function BarList({ items }: { items: { label: string; count: number; color?: str
           </div>
           <div className="bar-track">
             <div
-              className="bar-fill"
-              style={{
-                width: `${(item.count / max) * 100}%`,
-                background: item.color ? (BAR_COLORS[item.color] ?? undefined) : undefined,
-              }}
+              className={`bar-fill ${item.color ?? ""}`.trim()}
+              style={{ width: `${(item.count / max) * 100}%` }}
             />
           </div>
         </div>
@@ -95,7 +57,9 @@ function Stars({ value }: { value: number }) {
 export function ReportsPage() {
   const { tenantSlug = "" } = useParams();
   const { memberships } = useAuth();
+  const toast = useToast();
   const membership = memberships.find((item) => item.slug === tenantSlug);
+  const isTenantAdmin = membership?.role === "tenant_admin";
   const [period, setPeriod] = useState(30);
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,6 +88,53 @@ export function ReportsPage() {
     };
   }, [tenantSlug, period, membership]);
 
+  function exportReportCsv() {
+    if (!report) return;
+    const lines: string[] = [];
+    lines.push(`"OpsPilot Report - Last ${report.periodDays} days"`);
+    lines.push(`"Generated At","${new Date().toISOString()}"`);
+    lines.push("");
+
+    lines.push('"Summary Metric","Value"');
+    lines.push(`"Open Tickets",${report.summary.open}`);
+    lines.push(`"Unassigned Tickets",${report.summary.unassigned}`);
+    lines.push(`"Tickets Created in Period",${report.summary.created_period}`);
+    lines.push(`"Tickets Resolved (Last 7 Days)",${report.summary.resolved_week}`);
+    lines.push(`"SLA Breached",${report.summary.sla_breached}`);
+    lines.push(`"Average First Response Minutes",${report.summary.avg_response_minutes.toFixed(1)}`);
+    lines.push(`"Average Resolution Hours",${report.summary.avg_resolution_hours.toFixed(1)}`);
+    lines.push(`"CSAT Average Score",${report.csat.average.toFixed(2)}`);
+    lines.push(`"CSAT Responses",${report.csat.responses}`);
+    lines.push("");
+
+    lines.push('"Daily Trend - Date","Created","Resolved"');
+    for (const p of report.trend) {
+      lines.push(`"${p.day}",${p.created},${p.resolved}`);
+    }
+    lines.push("");
+
+    lines.push('"Tickets by Status","Stage","Count"');
+    for (const s of report.by_status) {
+      lines.push(`"${s.label.replaceAll('"', '""')}","${s.stage}",${s.count}`);
+    }
+    lines.push("");
+
+    lines.push('"Tickets by Priority","Count"');
+    for (const p of report.by_priority) {
+      lines.push(`"${p.label.replaceAll('"', '""')}",${p.count}`);
+    }
+    lines.push("");
+
+    lines.push('"Tickets by Team","Count"');
+    for (const t of report.by_team) {
+      lines.push(`"${t.label.replaceAll('"', '""')}",${t.count}`);
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    triggerDownload(lines.join("\r\n"), `report-${tenantSlug}-${report.periodDays}d-${dateStr}.csv`);
+    toast.success("Export prepared", "Preparing report CSV for download.");
+  }
+
   if (!membership?.permissions.includes("reports.view")) {
     return (
       <div className="stack-lg">
@@ -139,12 +150,27 @@ export function ReportsPage() {
         eyebrow="Insights"
         title="Reports"
         actions={
-          <Select
-            ariaLabel="Reporting period"
-            value={String(period)}
-            onChange={(next) => setPeriod(Number(next))}
-            options={PERIODS.map((days) => ({ value: String(days), label: `Last ${days} days` }))}
-          />
+          <div className="inline-fields">
+            <Select
+              ariaLabel="Reporting period"
+              value={String(period)}
+              onChange={(next) => setPeriod(Number(next))}
+              options={PERIODS.map((days) => ({ value: String(days), label: `Last ${days} days` }))}
+            />
+            {isTenantAdmin && (
+              <button
+                type="button"
+                className="button secondary"
+                onClick={exportReportCsv}
+                disabled={!report || loading}
+                aria-label="Export report metrics as CSV"
+                title="Export report metrics to CSV"
+              >
+                <Icon name="download" className="icon-sm" />
+                Export CSV
+              </button>
+            )}
+          </div>
         }
       >
         <p className="muted">Ticket flow, SLA health, and customer satisfaction for this workspace.</p>
@@ -152,43 +178,79 @@ export function ReportsPage() {
 
       <ErrorAlert message={error} />
       {loading && !report ? (
-        <Spinner />
+        <div className="stack-lg" role="status" aria-busy="true">
+          <span className="sr-only">Loading report</span>
+          <section className="stat-grid report-stats" aria-hidden="true">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div key={index} className="stat-card">
+                <span className="skeleton" style={{ width: 76 }} />
+                <span className="skeleton" style={{ width: 56, height: 26 }} />
+                <span className="skeleton" style={{ width: 104, height: 8 }} />
+              </div>
+            ))}
+          </section>
+          <div className="report-hero-grid" aria-hidden="true">
+            <div className="skeleton-panel">
+              <span className="skeleton" style={{ width: 108, height: 12 }} />
+              <span className="skeleton skeleton-chart" />
+            </div>
+            <div className="skeleton-panel">
+              <span className="skeleton" style={{ width: 140, height: 12 }} />
+              <span className="skeleton" style={{ width: 90, height: 34, marginTop: 14 }} />
+              <span className="skeleton" style={{ width: 120, height: 12, marginTop: 10 }} />
+            </div>
+          </div>
+          <div className="report-breakdown-grid" aria-hidden="true">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="skeleton-panel">
+                <span className="skeleton" style={{ width: 80, height: 12, marginBottom: 12 }} />
+                {[80, 55, 35].map((w, i) => (
+                  <div key={i} style={{ marginTop: 8 }}>
+                    <span className="skeleton" style={{ width: `${w}%`, height: 10 }} />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       ) : report ? (
         <>
-          <section className="stat-grid">
+          <section className="stat-grid report-stats">
             <div className="stat-card">
               <span>Open tickets</span>
-              <strong>{report.summary.open}</strong>
-              <small>{report.summary.unassigned} unassigned</small>
+              <strong>{report.summary?.open ?? 0}</strong>
+              <small>{report.summary?.unassigned ?? 0} unassigned</small>
             </div>
             <div className="stat-card">
               <span>Created</span>
-              <strong>{report.summary.created_period}</strong>
+              <strong>{report.summary?.created_period ?? 0}</strong>
               <small>last {report.periodDays} days</small>
             </div>
             <div className="stat-card">
               <span>Resolved</span>
-              <strong>{report.summary.resolved_week}</strong>
+              <strong>{report.summary?.resolved_week ?? 0}</strong>
               <small>last 7 days</small>
             </div>
             <div className="stat-card">
               <span>SLA breached</span>
-              <strong className={report.summary.sla_breached > 0 ? "danger" : undefined}>{report.summary.sla_breached}</strong>
+              <strong className={(report.summary?.sla_breached ?? 0) > 0 ? "danger" : undefined}>
+                {report.summary?.sla_breached ?? 0}
+              </strong>
               <small>all visible tickets</small>
             </div>
             <div className="stat-card">
               <span>Avg first response</span>
-              <strong>{formatMinutes(report.summary.avg_response_minutes)}</strong>
+              <strong>{formatMinutes(report.summary?.avg_response_minutes ?? 0)}</strong>
               <small>last {report.periodDays} days</small>
             </div>
             <div className="stat-card">
               <span>Avg resolution</span>
-              <strong>{formatHours(report.summary.avg_resolution_hours)}</strong>
+              <strong>{formatHours(report.summary?.avg_resolution_hours ?? 0)}</strong>
               <small>last {report.periodDays} days</small>
             </div>
           </section>
 
-          <div className="report-grid">
+          <div className="report-hero-grid">
             <section className="card">
               <h2>Ticket flow</h2>
               <TrendChart points={report.trend} />
@@ -204,14 +266,14 @@ export function ReportsPage() {
                     <Stars value={report.csat.average} />
                   </div>
                   <p className="muted">
-                    {report.csat.responses} response{report.csat.responses === 1 ? "" : "s"} · {report.csat.comments} written
+                    {report.csat.responses} response{report.csat.responses === 1 ? "" : "s"}, {report.csat.comments} written
                   </p>
                 </>
               )}
             </section>
           </div>
 
-          <div className="report-grid">
+          <div className="report-breakdown-grid">
             <section className="card">
               <h2>By status</h2>
               <BarList items={report.by_status.map((item) => ({ label: item.label, count: item.count }))} />
@@ -239,7 +301,7 @@ export function ReportsPage() {
                       <Stars value={item.rating} />
                     </div>
                     {item.comment && <p>{item.comment}</p>}
-                    <p className="muted small">{item.requester_name} · {formatDate(item.submitted_at)}</p>
+                    <p className="muted small">{item.requester_name} - {formatDate(item.submitted_at)}</p>
                   </li>
                 ))}
               </ul>

@@ -13,7 +13,8 @@ import {
 import { humanize } from "./api.js";
 import { useAuth } from "./auth.js";
 import type { User } from "./types.js";
-import { Icon, Menu, ThemeToggle, useTheme, type IconName } from "./ui.js";
+import { PageSkeleton } from "./components.js";
+import { Icon, BrandMark, Menu, ThemeToggle, useTheme, type IconName } from "./ui.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
@@ -21,6 +22,7 @@ import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { FeedbackPage } from "./pages/FeedbackPage.js";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordPages.js";
+import { OverviewPage } from "./pages/OverviewPage.js";
 import { PlatformPage } from "./pages/PlatformPage.js";
 import { ReportsPage } from "./pages/ReportsPage.js";
 import { TicketDetailPage } from "./pages/TicketDetailPage.js";
@@ -29,9 +31,8 @@ import { UsersPage } from "./pages/UsersPage.js";
 
 function Loading({ label = "Loading…" }: { label?: string }) {
   return (
-    <div className="loading">
-      <span className="spinner" />
-      {label}
+    <div className="boot-page">
+      <PageSkeleton rows={4} cols={4} label={label} />
     </div>
   );
 }
@@ -42,7 +43,7 @@ function HomeRedirect() {
   if (!user) return <Navigate to="/login" replace />;
   if (memberships.length === 0 && user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   if (memberships.length === 0) return <NoMembership />;
-  return <Navigate to={`/t/${memberships[0]?.slug}/tickets`} replace />;
+  return <Navigate to={`/t/${memberships[0]?.slug}/overview`} replace />;
 }
 
 function NoMembership() {
@@ -50,7 +51,7 @@ function NoMembership() {
   return (
     <div className="center-page">
       <div className="card narrow">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         <h1>No workspace yet</h1>
         <p className="muted">
           Signed in as {user?.email}. This account has no active tenant membership.
@@ -120,12 +121,26 @@ function initials(name: string): string {
 }
 
 function sectionTitle(pathname: string): string {
+  if (pathname.includes("/overview")) return "Overview";
   if (pathname.includes("/admin")) return "Configuration";
   if (pathname.includes("/reports")) return "Reports";
   if (pathname.includes("/users")) return "People";
   if (pathname.includes("/audit")) return "Audit log";
   if (/\/tickets\/[^/]+/.test(pathname)) return "Ticket";
   return "Tickets";
+}
+
+const SIDEBAR_KEY = "opspilot.sidebar";
+
+function readSidebarCollapsed(): boolean {
+  try {
+    const stored = localStorage.getItem(SIDEBAR_KEY);
+    if (stored === "collapsed") return true;
+    if (stored === "expanded") return false;
+  } catch {
+    /* storage unavailable */
+  }
+  return window.matchMedia("(max-width: 1099px)").matches;
 }
 
 function TenantLayout() {
@@ -135,7 +150,16 @@ function TenantLayout() {
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [collapsed]);
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -203,7 +227,7 @@ function TenantLayout() {
   const navGroups: { label: string; items: ReturnType<typeof makeItem>[] }[] = [
     {
       label: "Workspace",
-      items: [makeItem("tickets", "Tickets", "ticket")],
+      items: [makeItem("overview", "Overview", "overview"), makeItem("tickets", "Tickets", "ticket")],
     },
     {
       label: "Insights",
@@ -222,10 +246,10 @@ function TenantLayout() {
   ].filter((group) => group.items.length > 0);
 
   return (
-    <div className={`app-shell ${drawerOpen ? "drawer-open" : ""}`.trim()}>
+    <div className={`app-shell ${drawerOpen ? "drawer-open" : ""} ${collapsed ? "is-collapsed" : ""}`.trim()}>
       <aside className="sidebar" id="app-sidebar" aria-label="Main navigation">
         <div className="sb-brand">
-          <span className="brand-mark">OP</span>
+          <BrandMark />
           <span className="sb-brand-text">
             <strong>OpsPilot</strong>
             <span>Service desk</span>
@@ -235,6 +259,7 @@ function TenantLayout() {
         <div className="ws-switch">
           <Menu
             ariaLabel="Switch workspace"
+            triggerTitle={membership.name}
             triggerClassName="ws-trigger"
             label={
               <>
@@ -295,6 +320,7 @@ function TenantLayout() {
         <div className="sb-foot">
           <Menu
             ariaLabel="Account menu"
+            triggerTitle={`${user.displayName} · ${humanize(membership.role)}`}
             triggerClassName="sb-account"
             label={
               <>
@@ -327,6 +353,17 @@ function TenantLayout() {
 
       <div className="workspace">
         <header className="topbar">
+          <button
+            type="button"
+            className="icon-btn sb-collapse"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-controls="app-sidebar"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Icon name="sidebar" />
+          </button>
           <button
             ref={menuBtnRef}
             type="button"
@@ -380,7 +417,7 @@ function StandaloneLayout({ children }: { children: ReactNode }) {
     <div className="standalone-shell">
       <header className="standalone-bar">
         <Link className="sb-brand" to="/">
-          <span className="brand-mark">OP</span>
+          <BrandMark small />
           <span className="sb-brand-text">
             <strong>OpsPilot</strong>
             <span>Service desk</span>
@@ -436,6 +473,8 @@ function NotFound() {
   return (
     <div className="center-page">
       <div className="card narrow">
+        <BrandMark />
+        <p className="eyebrow">404</p>
         <h1>Not found</h1>
         <p className="muted">That page does not exist.</p>
         <Link className="button" to="/">
@@ -472,7 +511,8 @@ export function App() {
         }
       />
       <Route path="/t/:tenantSlug" element={<TenantLayout />}>
-        <Route index element={<Navigate to="tickets" replace />} />
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<OverviewPage />} />
         <Route path="tickets" element={<TicketsPage />} />
         <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
         <Route path="admin" element={<AdminPage />} />

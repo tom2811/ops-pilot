@@ -122,9 +122,31 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         ),
       ]);
 
+      const defaultSummary = {
+        total: 0,
+        open: 0,
+        unassigned: 0,
+        sla_breached: 0,
+        resolved_week: 0,
+        created_period: 0,
+        avg_resolution_hours: 0,
+        avg_response_minutes: 0,
+      };
+      const rawSummary = summary.rows[0] ?? defaultSummary;
+      const cleanSummary = {
+        total: Number(rawSummary.total ?? 0),
+        open: Number(rawSummary.open ?? 0),
+        unassigned: Number(rawSummary.unassigned ?? 0),
+        sla_breached: Number(rawSummary.sla_breached ?? 0),
+        resolved_week: Number(rawSummary.resolved_week ?? 0),
+        created_period: Number(rawSummary.created_period ?? 0),
+        avg_resolution_hours: Number(rawSummary.avg_resolution_hours ?? 0),
+        avg_response_minutes: Number(rawSummary.avg_response_minutes ?? 0),
+      };
+
       return {
         periodDays: days,
-        summary: summary.rows[0] ?? null,
+        summary: cleanSummary,
         by_status: byStatus.rows,
         by_priority: byPriority.rows,
         by_team: byTeam.rows,

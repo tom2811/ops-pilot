@@ -3,8 +3,8 @@ import { useParams } from "react-router-dom";
 import { PERMISSION_KEYS, type Permission } from "@opspilot/core";
 import { api, del, errorMessage, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, RoleBadge, Spinner } from "../components.js";
-import { Select, useConfirm, useToast } from "../ui.js";
+import { EmptyState, ErrorAlert, PageHeader, PageSkeleton, RoleBadge } from "../components.js";
+import { Select, Sheet, useConfirm, useToast } from "../ui.js";
 import type {
   Config,
   CustomRole,
@@ -52,6 +52,7 @@ export function UsersPage() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [roleSheetOpen, setRoleSheetOpen] = useState(false);
   const [roleName, setRoleName] = useState("");
   const [roleBase, setRoleBase] = useState<Role>("agent");
   const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
@@ -102,7 +103,7 @@ export function UsersPage() {
       </div>
     );
   }
-  if (loading) return <Spinner label="Loading people…" />;
+  if (loading) return <PageSkeleton rows={6} cols={5} label="Loading people" />;
 
   function updateDraft(userId: string, change: Partial<Draft>): void {
     setDrafts((current) => {
@@ -186,6 +187,15 @@ export function UsersPage() {
     setRolePermissions(role.permissions.filter((item): item is Permission =>
       (PERMISSION_KEYS as readonly string[]).includes(item),
     ));
+    setRoleSheetOpen(true);
+  }
+
+  function startRoleCreate(): void {
+    setEditingRoleId(null);
+    setRoleName("");
+    setRoleBase("agent");
+    setRolePermissions([]);
+    setRoleSheetOpen(true);
   }
 
   function resetRoleForm(): void {
@@ -193,6 +203,7 @@ export function UsersPage() {
     setRoleName("");
     setRoleBase("agent");
     setRolePermissions([]);
+    setRoleSheetOpen(false);
   }
 
   async function saveRole(event: FormEvent): Promise<void> {
@@ -249,7 +260,7 @@ export function UsersPage() {
   }
 
   return (
-    <>
+    <div className="stack-lg">
       <PageHeader eyebrow="Workspace" title="People and access">
         <p className="muted">Invite teammates, assign teams, and build custom permission sets.</p>
       </PageHeader>
@@ -270,10 +281,10 @@ export function UsersPage() {
         </div>
       )}
 
-      <div className="admin-grid">
+      <div className="people-top">
         <section className="card">
           <div className="section-heading"><h2>Invite someone</h2></div>
-          <form className="stack" onSubmit={(event) => void invite(event)}>
+          <form className="form-grid" onSubmit={(event) => void invite(event)}>
             <label>
               Email
               <input
@@ -293,7 +304,7 @@ export function UsersPage() {
               />
             </label>
             {teams.length > 0 && (
-              <fieldset className="field-group">
+              <fieldset className="field-group span-2">
                 <legend>Teams</legend>
                 {teams.map((team) => (
                   <label key={team.id} className="check-row">
@@ -313,12 +324,14 @@ export function UsersPage() {
                 ))}
               </fieldset>
             )}
-            <button className="button" disabled={busy} type="submit">Create invitation</button>
+            <div className="form-actions span-2">
+              <button className="button" disabled={busy} type="submit">Create invitation</button>
+            </div>
           </form>
         </section>
 
-        <section className="card">
-          <div className="section-heading"><h2>Pending invitations</h2></div>
+        <section className="list-panel">
+          <div className="panel-head"><h2>Pending invitations</h2></div>
           {invitations.length === 0 ? (
             <EmptyState title="No pending invitations">New invitations will appear here.</EmptyState>
           ) : (
@@ -345,86 +358,110 @@ export function UsersPage() {
         </section>
       </div>
 
-      <section className="card" style={{ marginTop: "1.25rem" }}>
-        <div className="section-heading">
+      <section className="list-panel">
+        <div className="panel-head">
           <h2>Custom roles</h2>
-          {editingRoleId && (
-            <button className="button ghost small" onClick={resetRoleForm}>Cancel edit</button>
-          )}
+          <button type="button" className="button secondary small" onClick={startRoleCreate}>
+            New role
+          </button>
         </div>
-        <div className="role-grid">
-          <form className="stack" onSubmit={(event) => void saveRole(event)}>
-            <label>
-              Role name
-              <input value={roleName} onChange={(event) => setRoleName(event.target.value)} required />
-            </label>
-            <label>
-              Base role
-              <Select
-                ariaLabel="Base role"
-                value={roleBase}
-                onChange={(next) => setRoleBase(next as Role)}
-                options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
-              />
-            </label>
-            <fieldset className="field-group">
-              <legend>Permissions</legend>
-              {PERMISSION_KEYS.map((permission) => (
-                <label key={permission} className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={rolePermissions.includes(permission)}
-                    onChange={(event) =>
-                      setRolePermissions((current) =>
-                        event.target.checked
-                          ? [...current, permission]
-                          : current.filter((item) => item !== permission),
-                      )
-                    }
-                  />
-                  {PERMISSION_LABELS[permission]}
-                </label>
-              ))}
-            </fieldset>
-            <button className="button" disabled={busy} type="submit">
-              {editingRoleId ? "Save role" : "Create role"}
-            </button>
-          </form>
-
-          <div className="role-list">
-            {roles.length === 0 ? (
-              <EmptyState title="No custom roles">Create one to grant a focused permission set.</EmptyState>
-            ) : (
-              roles.map((role) => (
-                <div key={role.id} className="role-card">
-                  <div>
-                    <strong>{role.name}</strong>
-                    <p className="muted small">
-                      {humanize(role.base_role)} · {role.member_count} member{role.member_count === 1 ? "" : "s"}
-                    </p>
-                    <p className="small">
+        {roles.length === 0 ? (
+          <EmptyState title="No custom roles">Create one to grant a focused permission set.</EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table className="compact">
+              <thead>
+                <tr><th>Role</th><th>Base role</th><th>Members</th><th>Permissions</th><th /></tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr key={role.id}>
+                    <td><strong>{role.name}</strong></td>
+                    <td>{humanize(role.base_role)}</td>
+                    <td>{role.member_count}</td>
+                    <td className="muted small">
                       {role.permissions.length === 0
                         ? "No extra permissions"
                         : role.permissions.map((permission) => humanize(permission.replace(".", " "))).join(", ")}
-                    </p>
-                  </div>
-                  <div className="role-actions">
-                    <button className="button ghost small" disabled={busy} onClick={() => startRoleEdit(role)}>
-                      Edit
-                    </button>
-                    <button className="button ghost small" disabled={busy} onClick={() => void deleteRole(role)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
+                    </td>
+                    <td>
+                      <div className="role-actions">
+                        <button className="button ghost small" disabled={busy} onClick={() => startRoleEdit(role)}>
+                          Edit
+                        </button>
+                        <button className="button ghost small" disabled={busy} onClick={() => void deleteRole(role)}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+        )}
       </section>
 
-      <section className="card" style={{ marginTop: "1.25rem" }}>
-        <div className="section-heading"><h2>Members</h2></div>
+      <Sheet
+        open={roleSheetOpen}
+        onClose={resetRoleForm}
+        eyebrow="Custom role"
+        title={editingRoleId ? "Edit role" : "New role"}
+        description="Pick a base role, then add only the permissions this role should have."
+        footer={
+          <>
+            <button type="button" className="button secondary" onClick={resetRoleForm}>
+              Cancel
+            </button>
+            <button type="submit" form="role-form" className="button" disabled={busy}>
+              {editingRoleId ? "Save role" : "Create role"}
+            </button>
+          </>
+        }
+      >
+        <form id="role-form" className="form-stack" onSubmit={(event) => void saveRole(event)}>
+          <label>
+            Role name
+            <input
+              data-autofocus
+              value={roleName}
+              onChange={(event) => setRoleName(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Base role
+            <Select
+              ariaLabel="Base role"
+              value={roleBase}
+              onChange={(next) => setRoleBase(next as Role)}
+              options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
+            />
+          </label>
+          <fieldset className="field-group">
+            <legend>Permissions</legend>
+            {PERMISSION_KEYS.map((permission) => (
+              <label key={permission} className="check-row">
+                <input
+                  type="checkbox"
+                  checked={rolePermissions.includes(permission)}
+                  onChange={(event) =>
+                    setRolePermissions((current) =>
+                      event.target.checked
+                        ? [...current, permission]
+                        : current.filter((item) => item !== permission),
+                    )
+                  }
+                />
+                {PERMISSION_LABELS[permission]}
+              </label>
+            ))}
+          </fieldset>
+        </form>
+      </Sheet>
+
+      <section className="list-panel">
+        <div className="panel-head"><h2>Members</h2></div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -510,6 +547,6 @@ export function UsersPage() {
           </table>
         </div>
       </section>
-    </>
+    </div>
   );
 }

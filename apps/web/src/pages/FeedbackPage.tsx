@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError, errorMessage, post } from "../api.js";
-import { ErrorAlert, Spinner } from "../components.js";
+import { CardSkeleton, ErrorAlert } from "../components.js";
+import { BrandMark } from "../ui.js";
 import type { FeedbackInfo } from "../types.js";
 
 const RATING_LABELS: Record<number, string> = {
@@ -70,12 +71,12 @@ export function FeedbackPage() {
     }
   }
 
-  if (loading) return <div className="center-page"><Spinner /></div>;
+  if (loading) return <CardSkeleton label="Loading feedback form" />;
 
   return (
     <div className="center-page">
       <div className="card narrow">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         <p className="eyebrow">{info ? info.tenantName : "OpsPilot"}</p>
         {!token ? (
           <>
@@ -94,7 +95,7 @@ export function FeedbackPage() {
               {info ? `Ticket #${info.ticketNumber} · ${info.ticketSubject}` : "Your rating has been recorded."}
             </p>
             <div className="csat-score">
-              <strong>{rating || info?.rating || "–"}</strong>
+              <strong>{rating || info?.rating || "-"}</strong>
               <span className="stars" aria-hidden="true">
                 {"★".repeat(rating || info?.rating || 0)}
                 <span className="stars-empty">{"★".repeat(5 - (rating || info?.rating || 0))}</span>

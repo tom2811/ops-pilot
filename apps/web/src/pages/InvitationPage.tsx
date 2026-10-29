@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, errorMessage, post } from "../api.js";
-import { ErrorAlert, Spinner } from "../components.js";
+import { CardSkeleton, ErrorAlert } from "../components.js";
+import { BrandMark } from "../ui.js";
 import type { InvitationInfo } from "../types.js";
 
 export function InvitationPage() {
@@ -46,12 +47,12 @@ export function InvitationPage() {
     }
   }
 
-  if (loading) return <div className="center-page"><Spinner label="Checking invitation…" /></div>;
+  if (loading) return <CardSkeleton label="Checking invitation" />;
 
   return (
     <div className="center-page">
       <div className="card narrow">
-        <div className="brand-mark">OP</div>
+        <BrandMark />
         {info ? (
           <>
             <p className="eyebrow">{info.tenantName}</p>

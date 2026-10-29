@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, errorMessage, formatDate, humanize } from "../api.js";
 import { useAuth } from "../auth.js";
-import { EmptyState, ErrorAlert, PageHeader, Spinner } from "../components.js";
+import { EmptyState, ErrorAlert, PageHeader, Pager, SkeletonRows } from "../components.js";
 import { Select } from "../ui.js";
 import type { AuditEntry, AuditLog } from "../types.js";
 
@@ -12,12 +12,12 @@ function formatValue(value: unknown): string {
 }
 
 function summarize(value: unknown): string {
-  if (value === null || value === undefined) return "–";
+  if (value === null || value === undefined) return "-";
   if (typeof value !== "object") return String(value);
   const entries = Object.entries(value as Record<string, unknown>).filter(
     ([, item]) => item !== null && item !== undefined,
   );
-  if (entries.length === 0) return "–";
+  if (entries.length === 0) return "-";
   return entries.map(([key, item]) => `${key}: ${formatValue(item)}`).join(", ");
 }
 
@@ -41,7 +41,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
               {open ? "Hide" : "Details"}
             </button>
           ) : (
-            <span className="muted small">–</span>
+            <span className="muted small">-</span>
           )}
         </td>
       </tr>
@@ -129,8 +129,8 @@ export function AuditLogPage() {
 
       <ErrorAlert message={error} />
 
-      <section className="card">
-        <div className="filter-bar">
+      <section className="list-panel">
+        <div className="toolbar">
           <Select
             ariaLabel="Entity type"
             value={entityType}
@@ -162,11 +162,26 @@ export function AuditLogPage() {
         </div>
 
         {loading && !data ? (
-          <Spinner label="Loading audit entries…" />
+          <div className="table-wrap">
+            <table className="audit-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Action</th>
+                  <th className="col-entity">Entity</th>
+                  <th className="col-actor">Actor</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                <SkeletonRows cols={5} />
+              </tbody>
+            </table>
+          </div>
         ) : data && data.items.length === 0 ? (
           <EmptyState title="No audit entries">Nothing matches the current filters.</EmptyState>
         ) : (
-          <div className="table-wrap">
+          <div className={`table-wrap${loading ? " is-refreshing" : ""}`.trim()}>
             <table className="audit-table">
               <thead>
                 <tr>
@@ -187,29 +202,11 @@ export function AuditLogPage() {
         )}
 
         {data && (
-          <div className="pagination">
+          <div className="list-foot">
             <span className="muted small">
               {data.total} entr{data.total === 1 ? "y" : "ies"}
             </span>
-            <div className="pagination-actions">
-              <button
-                className="button ghost small"
-                disabled={page <= 1}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                Previous
-              </button>
-              <span className="muted small">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                className="button ghost small"
-                disabled={page >= totalPages}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Next
-              </button>
-            </div>
+            <Pager page={page} totalPages={totalPages} onChange={setPage} />
           </div>
         )}
       </section>
