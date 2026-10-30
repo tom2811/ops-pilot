@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { formatTicketNumber } from "@opspilot/core";
+import { formatTicketNumber, renderTemplate } from "@opspilot/core";
 import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { DetailSkeleton, EmptyState, ErrorAlert, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
@@ -195,6 +195,34 @@ export function TicketDetailPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleInsertCanned(cannedId: string): void {
+    if (!cannedId || !detail) return;
+    const canned = config?.canned_responses?.find((item) => item.id === cannedId);
+    if (!canned) return;
+    const formattedNum = formatTicketNumber(prefix, detail.number);
+    const text = renderTemplate(canned.body, {
+      ticket: {
+        number: formattedNum,
+        subject: detail.subject,
+      },
+      number: formattedNum,
+      subject: detail.subject,
+      requester: {
+        name: detail.requester_name,
+      },
+      requesterName: detail.requester_name,
+      agent: {
+        name: user?.displayName ?? "",
+      },
+      agentName: user?.displayName ?? "",
+      "ticket.number": formattedNum,
+      "ticket.subject": detail.subject,
+      "requester.name": detail.requester_name,
+      "agent.name": user?.displayName ?? "",
+    });
+    setCommentBody((current) => (current ? `${current}\n\n${text}` : text));
   }
 
   async function submitComment(event: FormEvent): Promise<void> {
@@ -563,9 +591,23 @@ export function TicketDetailPage() {
             )}
 
             <form className="comment-form" onSubmit={(event) => void submitComment(event)}>
+              {canAgent && (config?.canned_responses?.length ?? 0) > 0 && (
+                <div className="canned-response-picker">
+                  <Select
+                    ariaLabel="Insert canned response"
+                    value=""
+                    placeholder="Insert canned response..."
+                    onChange={handleInsertCanned}
+                    options={(config?.canned_responses ?? []).map((c) => ({
+                      value: c.id,
+                      label: `${c.title} (/${c.shortcut})`,
+                    }))}
+                  />
+                </div>
+              )}
               <textarea
                 rows={4}
-                placeholder="Write a reply…"
+                placeholder="Write a reply..."
                 value={commentBody}
                 onChange={(event) => setCommentBody(event.target.value)}
                 required

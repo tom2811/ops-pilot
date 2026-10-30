@@ -2124,6 +2124,11 @@ tbody td:last-child {
   overflow-wrap: anywhere;
 }
 
+.canned-response-picker {
+  margin-bottom: 10px;
+  max-width: 320px;
+}
+
 .comment-form {
   margin-top: 14px;
   padding-top: 14px;

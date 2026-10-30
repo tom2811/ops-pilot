@@ -82,6 +82,14 @@ export type SlaPolicy = {
   is_active: boolean;
 };
 
+export type CannedResponse = {
+  id: string;
+  title: string;
+  shortcut: string;
+  body: string;
+  is_active: boolean;
+};
+
 export type Config = {
   teams: Team[];
   categories: Category[];
@@ -92,6 +100,7 @@ export type Config = {
   agents: Agent[];
   settings: TenantSettings | null;
   sla_policies: SlaPolicy[];
+  canned_responses?: CannedResponse[];
 };
 
 export type Ticket = {

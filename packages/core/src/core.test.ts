@@ -65,6 +65,15 @@ describe("renderTemplate", () => {
       "Hi Sam, ticket 42 ",
     );
   });
+
+  it("resolves nested properties", () => {
+    expect(
+      renderTemplate("Hello {{requester.name}}, ticket {{ticket.number}}", {
+        requester: { name: "Alice" },
+        ticket: { number: "ACM-000001" },
+      }),
+    ).toBe("Hello Alice, ticket ACM-000001");
+  });
 });
 
 describe("addBusinessMinutes", () => {
@@ -102,6 +111,34 @@ describe("addBusinessMinutes", () => {
   it("falls back to calendar addition when config is omitted", () => {
     const start = new Date("2026-10-30T16:30:00Z");
     const result = addBusinessMinutes(start, 60);
+    expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
+  });
+
+  it("uses the tenant timezone with a half-hour offset", () => {
+    // Fri Oct 30 2026, 16:30 in Yangon (UTC+6:30). 30 minutes remain before 17:00.
+    // The rest rolls over the weekend to Mon Nov 2 09:30 in Yangon.
+    const start = new Date("2026-10-30T10:00:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, timeZone: "Asia/Yangon" });
+    expect(result.toISOString()).toBe("2026-11-02T03:00:00.000Z");
+  });
+
+  it("uses the tenant timezone in Bangkok", () => {
+    // Mon Nov 2 2026, 10:00 in Bangkok (UTC+7), add two business hours.
+    const start = new Date("2026-11-02T03:00:00Z");
+    const result = addBusinessMinutes(start, 120, { ...config, timeZone: "Asia/Bangkok" });
+    expect(result.toISOString()).toBe("2026-11-02T05:00:00.000Z");
+  });
+
+  it("respects custom business days", () => {
+    // Fri Oct 30 2026, 16:30 UTC. Only Sunday is a business day.
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, businessDays: [7] });
+    expect(result.toISOString()).toBe("2026-11-01T10:00:00.000Z");
+  });
+
+  it("falls back to calendar addition when the window is invalid", () => {
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, startHour: 17, endHour: 9 });
     expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
   });
 });

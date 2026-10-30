@@ -246,11 +246,12 @@ async function getBusinessHoursConfig(
   tenantId: string,
 ): Promise<BusinessHoursConfig | undefined> {
   const settings = await client.query<{
+    timezone: string | null;
     business_hours_start: string;
     business_hours_end: string;
     business_days: number[];
   }>(
-    `select business_hours_start, business_hours_end, business_days
+    `select timezone, business_hours_start, business_hours_end, business_days
        from tenant_settings
       where tenant_id = $1`,
     [tenantId],
@@ -265,6 +266,7 @@ async function getBusinessHoursConfig(
     endHour: eh,
     endMinute: em,
     businessDays: row.business_days || [1, 2, 3, 4, 5],
+    timeZone: row.timezone || "UTC",
   };
 }
 

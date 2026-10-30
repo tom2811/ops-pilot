@@ -1,10 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { routingConditionsSchema, slaPolicyInputSchema, tenantSettingsInputSchema } from "@opspilot/core";
+import {
+  cannedResponseInputSchema,
+  cannedResponseUpdateSchema,
+  routingConditionsSchema,
+  slaPolicyInputSchema,
+  tenantSettingsInputSchema,
+} from "@opspilot/core";
 import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, conflict, notFound } from "../errors.js";
 
 const slug = z
   .string()
@@ -75,41 +81,42 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/t/:tenantSlug/config", async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     return withTenant(tenantId, userId, async (client) => {
-      const [teams, categories, priorities, statuses, customFields, routingRules, agents, settings, slaPolicies] = await Promise.all([
-        client.query(
-          "select id, slug, name from teams where tenant_id = $1 and is_active order by name",
-          [tenantId],
-        ),
-        client.query(
-          `select id, slug, name, default_team_id from categories
-           where tenant_id = $1 and is_active order by name`,
-          [tenantId],
-        ),
-        client.query(
-          "select id, key, label, rank, color from priorities where tenant_id = $1 and is_active order by rank",
-          [tenantId],
-        ),
-        client.query(
-          "select id, key, label, stage, sort_order from ticket_statuses where tenant_id = $1 and is_active order by sort_order",
-          [tenantId],
-        ),
-        client.query(
-          `select id, key, label, type, required, visibility, options, applies_to_category_id, sort_order
-           from custom_field_definitions
-           where tenant_id = $1 and is_active and ($2 = false or visibility = 'public')
-           order by sort_order, label`,
-          [tenantId, role === "employee"],
-        ),
+      const teams = await client.query(
+        "select id, slug, name from teams where tenant_id = $1 and is_active order by name",
+        [tenantId],
+      );
+      const categories = await client.query(
+        `select id, slug, name, default_team_id from categories
+         where tenant_id = $1 and is_active order by name`,
+        [tenantId],
+      );
+      const priorities = await client.query(
+        "select id, key, label, rank, color from priorities where tenant_id = $1 and is_active order by rank",
+        [tenantId],
+      );
+      const statuses = await client.query(
+        "select id, key, label, stage, sort_order from ticket_statuses where tenant_id = $1 and is_active order by sort_order",
+        [tenantId],
+      );
+      const customFields = await client.query(
+        `select id, key, label, type, required, visibility, options, applies_to_category_id, sort_order
+         from custom_field_definitions
+         where tenant_id = $1 and is_active and ($2 = false or visibility = 'public')
+         order by sort_order, label`,
+        [tenantId, role === "employee"],
+      );
+      const routingRules =
         role === "employee"
-          ? Promise.resolve({ rows: [] })
-          : client.query(
+          ? { rows: [] }
+          : await client.query(
               `select id, name, conditions, team_id, sort_order, version
                from routing_rules where tenant_id = $1 and is_active order by sort_order, id`,
               [tenantId],
-            ),
+            );
+      const agents =
         role === "employee"
-          ? Promise.resolve({ rows: [] })
-          : client.query(
+          ? { rows: [] }
+          : await client.query(
               `select m.user_id as id, u.display_name as name, m.role,
                       coalesce(jsonb_agg(tm.team_id) filter (where tm.team_id is not null), '[]'::jsonb) as team_ids
                from memberships m
@@ -119,20 +126,29 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
                group by m.user_id, u.display_name, m.role
                order by u.display_name`,
               [tenantId],
-            ),
-        client.query(
-          "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version, business_hours_start, business_hours_end, business_days from tenant_settings where tenant_id = $1",
-          [tenantId],
-        ),
+            );
+      const settings = await client.query(
+        "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version, business_hours_start, business_hours_end, business_days from tenant_settings where tenant_id = $1",
+        [tenantId],
+      );
+      const slaPolicies =
         role === "employee"
-          ? Promise.resolve({ rows: [] })
-          : client.query(
+          ? { rows: [] }
+          : await client.query(
               `select id, name, priority_id, category_id, response_minutes, resolution_minutes, is_active, business_hours_only
                from sla_policies where tenant_id = $1 and is_active
                order by name`,
               [tenantId],
-            ),
-      ]);
+            );
+      const cannedResponses =
+        role === "employee"
+          ? { rows: [] }
+          : await client.query(
+              `select id, title, shortcut, body, is_active
+               from canned_responses where tenant_id = $1 and is_active
+               order by title`,
+              [tenantId],
+            );
 
       return {
         teams: teams.rows,
@@ -144,6 +160,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         agents: agents.rows,
         settings: settings.rows[0] ?? null,
         sla_policies: slaPolicies.rows,
+        canned_responses: cannedResponses.rows,
       };
     });
   });
@@ -554,6 +571,20 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const { userId, tenantId, role } = tenantContext(req);
     const input = tenantSettingsInputSchema.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
+      if (input.businessHoursStart || input.businessHoursEnd) {
+        const current = await client.query<{ business_hours_start: string; business_hours_end: string }>(
+          "select business_hours_start, business_hours_end from tenant_settings where tenant_id = $1",
+          [tenantId],
+        );
+        const row = current.rows[0];
+        const toMinutes = (value: string): number => {
+          const [hours = 0, minutes = 0] = value.split(":").map(Number);
+          return hours * 60 + minutes;
+        };
+        const start = toMinutes(input.businessHoursStart ?? row?.business_hours_start ?? "09:00");
+        const end = toMinutes(input.businessHoursEnd ?? row?.business_hours_end ?? "17:00");
+        if (end <= start) badRequest("Business hours end must be after start");
+      }
       const result = await client.query(
         `update tenant_settings set timezone = $2, ticket_prefix = $3,
                 reopen_window_days = $4, auto_close_days = $5,
@@ -577,6 +608,75 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       await writeAudit(client, tenantId, { id: userId, role }, "config.settings_updated", "tenant_settings", tenantId, null, input, req.correlationId);
       return result.rows[0];
     });
+  });
+
+  app.post("/t/:tenantSlug/canned-responses", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const input = cannedResponseInputSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `insert into canned_responses (tenant_id, title, shortcut, body, created_by)
+         values ($1, $2, $3, $4, $5)
+         on conflict (tenant_id, shortcut) do update set
+           title = excluded.title,
+           body = excluded.body,
+           is_active = true,
+           created_by = excluded.created_by,
+           updated_at = now()
+         where canned_responses.is_active = false
+         returning id, title, shortcut, body, is_active, created_at, updated_at`,
+        [tenantId, input.title, input.shortcut.toLowerCase(), input.body, userId],
+      );
+      const canned = result.rows[0];
+      if (!canned) conflict("An active canned response already uses that shortcut");
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.canned_response_created",
+        "canned_response",
+        canned.id,
+        null,
+        { title: input.title, shortcut: input.shortcut },
+        req.correlationId,
+      );
+      return canned;
+    });
+  });
+
+  app.patch("/t/:tenantSlug/canned-responses/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = cannedResponseUpdateSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update canned_responses set
+           title = coalesce($3, title),
+           shortcut = coalesce($4, shortcut),
+           body = coalesce($5, body),
+           updated_at = now()
+         where tenant_id = $1 and id = $2
+         returning id, title, shortcut, body, is_active, created_at, updated_at`,
+        [tenantId, id, input.title ?? null, input.shortcut ? input.shortcut.toLowerCase() : null, input.body ?? null],
+      );
+      if (!result.rows[0]) notFound("Canned response not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.canned_response_updated", "canned_response", id, null, input, req.correlationId);
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/canned-responses/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        "update canned_responses set is_active = false where tenant_id = $1 and id = $2",
+        [tenantId, id],
+      );
+      if ((result.rowCount ?? 0) === 0) notFound("Canned response not found");
+      await writeAudit(client, tenantId, { id: userId, role }, "config.canned_response_deactivated", "canned_response", id, null, null, req.correlationId);
+    });
+    return reply.status(204).send();
   });
 
 }
