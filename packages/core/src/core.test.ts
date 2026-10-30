@@ -5,6 +5,7 @@ import {
   createTicketLinkSchema,
   formatTicketNumber,
   INVERSE_LINK_TYPES,
+  isSlaAtRisk,
   matchesRoutingConditions,
   mergeTicketSchema,
   parseEmailAddress,
@@ -237,4 +238,36 @@ describe("ticket links and merging", () => {
     }
   });
 });
+
+describe("isSlaAtRisk", () => {
+  it("detects when SLA is below, at, and above 80% threshold", () => {
+    const created = new Date("2026-10-30T10:00:00.000Z");
+    const due = new Date("2026-10-30T11:40:00.000Z"); // 100 minutes total
+
+    // 50 minutes elapsed = 50% -> false
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T10:50:00.000Z"))).toBe(false);
+
+    // 79 minutes elapsed = 79% -> false
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T11:19:00.000Z"))).toBe(false);
+
+    // 80 minutes elapsed = 80% -> true
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T11:20:00.000Z"))).toBe(true);
+
+    // 95 minutes elapsed = 95% -> true
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T11:35:00.000Z"))).toBe(true);
+
+    // 100 minutes elapsed = 100% (due reached) -> false (breached/overdue, not at-risk warning)
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T11:40:00.000Z"))).toBe(false);
+
+    // 110 minutes elapsed = 110% -> false
+    expect(isSlaAtRisk(created, due, 0.8, new Date("2026-10-30T11:50:00.000Z"))).toBe(false);
+  });
+
+  it("handles null or invalid inputs safely", () => {
+    const created = new Date("2026-10-30T10:00:00.000Z");
+    expect(isSlaAtRisk(created, null)).toBe(false);
+    expect(isSlaAtRisk(created, "invalid-date")).toBe(false);
+  });
+});
+
 

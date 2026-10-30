@@ -128,7 +128,10 @@ export type Ticket = {
   sla_resolution_due_at: string | null;
   sla_response_breached_at: string | null;
   sla_resolution_breached_at: string | null;
+  sla_response_warning_at?: string | null;
+  sla_resolution_warning_at?: string | null;
   sla_paused_at: string | null;
+  pending_chaser_sent_at?: string | null;
   merged_into_ticket_id?: string | null;
   created_at: string;
   updated_at: string;

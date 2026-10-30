@@ -59,6 +59,16 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: strin
     subject: "Ticket #{{number}} resolved",
     body: "\"{{subject}}\" has been resolved.\n\n{{summary}}",
   },
+  {
+    key: "sla_warning",
+    subject: "SLA warning: Ticket #{{number}} approaching breach threshold",
+    body: "Ticket #{{number}} (\"{{subject}}\") has reached 80% of its {{kind}} SLA limit. Please take action before the SLA breaches at {{dueAt}}.",
+  },
+  {
+    key: "pending_chaser",
+    subject: "Reminder: Waiting for your reply on ticket #{{number}}",
+    body: "Hello {{requesterName}},\n\nYour ticket #{{number}} (\"{{subject}}\") is currently waiting on your input. If no reply is received, the ticket will be automatically resolved.\n\nPlease reply directly to this email to provide an update.",
+  },
 ];
 
 export function renderTemplate(template: string, variables: Record<string, unknown>): string {
@@ -649,3 +659,23 @@ export function addBusinessMinutes(
 
   return cursor;
 }
+
+export function isSlaAtRisk(
+  createdAt: Date | string,
+  dueAt: Date | string | null,
+  threshold = 0.8,
+  now: Date | string = new Date(),
+): boolean {
+  if (!dueAt) return false;
+  const start = new Date(createdAt).getTime();
+  const end = new Date(dueAt).getTime();
+  const current = new Date(now).getTime();
+  if (isNaN(start) || isNaN(end) || isNaN(current)) return false;
+  if (current >= end) return false;
+  const total = end - start;
+  if (total <= 0) return false;
+  const elapsed = current - start;
+  if (elapsed < 0) return false;
+  return elapsed / total >= threshold;
+}
+

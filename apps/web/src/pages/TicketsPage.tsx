@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { formatTicketNumber } from "@opspilot/core";
+import { formatTicketNumber, isSlaAtRisk } from "@opspilot/core";
 import { api, downloadFile, errorMessage, formatDate, post, triggerDownload } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Pager, PriorityBadge, SkeletonRows, SlaBadge, StatusBadge } from "../components.js";
@@ -547,6 +547,12 @@ export function TicketsPage() {
                   const priorityMeta = priorities.get(ticket.priority_key);
                   const slaBreached = Boolean(ticket.sla_resolution_breached_at || ticket.sla_response_breached_at);
                   const slaPaused = Boolean(ticket.sla_paused_at);
+                  const slaWarning = Boolean(
+                    ticket.sla_response_warning_at ||
+                    ticket.sla_resolution_warning_at ||
+                    (ticket.sla_response_due_at && isSlaAtRisk(ticket.created_at, ticket.sla_response_due_at)) ||
+                    (ticket.sla_resolution_due_at && isSlaAtRisk(ticket.created_at, ticket.sla_resolution_due_at)),
+                  );
                   const slaDue = ticket.sla_resolution_due_at;
                   return (
                     <tr key={ticket.id}>
@@ -577,6 +583,8 @@ export function TicketsPage() {
                           <SlaBadge label="Breached" state="breached" />
                         ) : slaPaused ? (
                           <SlaBadge label="Paused" state="paused" />
+                        ) : slaWarning ? (
+                          <SlaBadge label="At risk" state="warning" />
                         ) : slaDue ? (
                           <SlaBadge
                             label={formatDate(slaDue)}

@@ -1505,6 +1505,13 @@ input[type="checkbox"]:disabled {
   color: var(--danger);
 }
 
+.sla-warning,
+.sla-at_risk,
+.sla-at-risk {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .sla-paused {
   background: var(--neutral-soft);
   color: var(--muted);

@@ -44,7 +44,10 @@ export type TicketRow = {
   sla_resolution_due_at: Date | null;
   sla_response_breached_at: Date | null;
   sla_resolution_breached_at: Date | null;
+  sla_response_warning_at: Date | null;
+  sla_resolution_warning_at: Date | null;
   sla_paused_at: Date | null;
+  pending_chaser_sent_at: Date | null;
   merged_into_ticket_id: string | null;
   created_at: Date;
   updated_at: Date;
@@ -68,7 +71,9 @@ const ticketSelect = `
          t.resolution_summary, t.pending_reason, t.version, t.reopened_count,
          t.first_responded_at, t.resolved_at, t.closed_at,
          t.sla_policy_id, t.sla_response_due_at, t.sla_resolution_due_at,
-         t.sla_response_breached_at, t.sla_resolution_breached_at, t.sla_paused_at,
+         t.sla_response_breached_at, t.sla_resolution_breached_at,
+         t.sla_response_warning_at, t.sla_resolution_warning_at,
+         t.sla_paused_at, t.pending_chaser_sent_at,
          t.merged_into_ticket_id,
          t.created_at, t.updated_at,
          s.key as status_key, s.label as status_label, s.stage as status_stage,
@@ -257,8 +262,8 @@ export async function listTickets(
   };
 }
 
-async function getBusinessHoursConfig(
-  client: pg.PoolClient,
+export async function getBusinessHoursConfig(
+  client: pg.PoolClient | pg.Pool,
   tenantId: string,
 ): Promise<BusinessHoursConfig | undefined> {
   const settings = await client.query<{
@@ -751,6 +756,9 @@ export async function applyTransition(
        sla_paused_at = case when $4 = 'pending' then coalesce(sla_paused_at, now())
                             when $9 then null
                             else sla_paused_at end,
+       pending_chaser_sent_at = case when $4 = 'pending' then null
+                                     when $9 then null
+                                     else pending_chaser_sent_at end,
        reopened_count = reopened_count + case when $7 then 1 else 0 end,
        version = version + 1,
        updated_at = now()

@@ -8,6 +8,8 @@ import { createMailer } from "./mailer.js";
 import { writeAudit } from "./audit.js";
 import { enqueueEvent } from "./outbox.js";
 import { processInboundEmail } from "./domain/inboundEmail.js";
+import { addBusinessMinutes, renderTemplate } from "@opspilot/core";
+import { getBusinessHoursConfig } from "./domain/tickets.js";
 
 const REDACTED_BODY = "[body redacted]";
 const SMTP_NOT_CONFIGURED = "SMTP is not configured";
@@ -253,12 +255,262 @@ async function markSlaBreaches(kind: "response" | "resolution"): Promise<number>
   return result.rowCount ?? 0;
 }
 
+type SlaWarningRow = {
+  tenant_id: string;
+  id: string;
+  number: number;
+  subject: string;
+  assignee_id: string | null;
+  team_id: string | null;
+  due_at: Date;
+  version: number;
+};
+
+async function markSlaWarnings(kind: "response" | "resolution"): Promise<number> {
+  const warningColumn = kind === "response" ? "sla_response_warning_at" : "sla_resolution_warning_at";
+  const breachedColumn = kind === "response" ? "sla_response_breached_at" : "sla_resolution_breached_at";
+  const dueColumn = kind === "response" ? "sla_response_due_at" : "sla_resolution_due_at";
+  const metCondition =
+    kind === "response"
+      ? "(first_responded_at is null)"
+      : "(resolved_at is null)";
+
+  const result = await pool.query<SlaWarningRow>(
+    `with at_risk as (
+       select tenant_id, id
+       from tickets
+       where ${dueColumn} is not null
+         and now() >= created_at + 0.8 * (${dueColumn} - created_at)
+         and now() < ${dueColumn}
+         and ${warningColumn} is null
+         and ${breachedColumn} is null
+         and sla_paused_at is null
+         and deleted_at is null
+         and merged_into_ticket_id is null
+         and ${metCondition}
+       order by ${dueColumn}
+       for update skip locked
+       limit 100
+     )
+     update tickets t
+     set ${warningColumn} = now(), version = version + 1, updated_at = now()
+     from at_risk
+     where t.tenant_id = at_risk.tenant_id and t.id = at_risk.id
+     returning t.tenant_id, t.id, t.number, t.subject, t.assignee_id, t.team_id, t.${dueColumn} as due_at, t.version`,
+  );
+
+  for (const ticket of result.rows) {
+    await writeAudit(
+      pool,
+      ticket.tenant_id,
+      { id: null, role: "system" },
+      `ticket.sla_${kind}_warning`,
+      "ticket",
+      ticket.id,
+      null,
+      { kind, percent: 80, dueAt: ticket.due_at },
+      randomUUID(),
+    );
+
+    const eventId = await enqueueEvent(pool, ticket.tenant_id, "ticket", ticket.id, ticket.version, "ticket.sla_warning", {
+      ticketId: ticket.id,
+      kind,
+      percent: 80,
+      dueAt: ticket.due_at,
+    });
+
+    // Determine recipients to alert (assignee if assigned, otherwise team members)
+    const recipientIds: string[] = [];
+    if (ticket.assignee_id) {
+      recipientIds.push(ticket.assignee_id);
+    } else if (ticket.team_id) {
+      const teamUsers = await pool.query<{ user_id: string }>(
+        "select user_id from team_members where tenant_id = $1 and team_id = $2",
+        [ticket.tenant_id, ticket.team_id],
+      );
+      recipientIds.push(...teamUsers.rows.map((r) => r.user_id));
+    }
+
+    if (recipientIds.length > 0) {
+      const tmpl = await pool.query<{ subject: string; body: string }>(
+        "select subject, body from notification_templates where tenant_id = $1 and key = 'sla_warning' and is_active",
+        [ticket.tenant_id],
+      );
+      const subjectTmpl = tmpl.rows[0]?.subject ?? "SLA warning: Ticket #{{number}} approaching breach threshold";
+      const bodyTmpl =
+        tmpl.rows[0]?.body ??
+        'Ticket #{{number}} ("{{subject}}") has reached 80% of its {{kind}} SLA limit. Please take action before the SLA breaches at {{dueAt}}.';
+      const vars = {
+        number: ticket.number,
+        subject: ticket.subject,
+        kind,
+        dueAt: ticket.due_at.toISOString(),
+      };
+      const renderedSubj = renderTemplate(subjectTmpl, vars);
+      const renderedBody = renderTemplate(bodyTmpl, vars);
+
+      for (const recipientId of recipientIds) {
+        await pool.query(
+          `insert into notifications
+             (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, delivery_status, subject, body)
+           values ($1, $2, $3, $4, 'email', $5, 'pending', 'pending', $6, $7)
+           on conflict (tenant_id, dedupe_key) do nothing`,
+          [
+            ticket.tenant_id,
+            eventId,
+            ticket.id,
+            recipientId,
+            `${eventId}:sla_${kind}_warning:${recipientId}`,
+            renderedSubj,
+            renderedBody,
+          ],
+        );
+      }
+    }
+  }
+
+  return result.rowCount ?? 0;
+}
+
+async function sendPendingChasers(): Promise<number> {
+  const result = await pool.query<{
+    tenant_id: string;
+    id: string;
+    number: number;
+    subject: string;
+    requester_id: string;
+    assignee_id: string | null;
+    sla_paused_at: Date;
+    version: number;
+    requester_name: string;
+  }>(
+    `select t.tenant_id, t.id, t.number, t.subject, t.requester_id, t.assignee_id, t.sla_paused_at, t.version,
+            u.display_name as requester_name
+     from tickets t
+     join ticket_statuses s on s.tenant_id = t.tenant_id and s.id = t.status_id
+     join users u on u.id = t.requester_id
+     where s.stage = 'pending'
+       and t.sla_paused_at is not null
+       and t.pending_chaser_sent_at is null
+       and t.deleted_at is null
+       and t.merged_into_ticket_id is null
+     order by t.sla_paused_at asc
+     for update of t skip locked
+     limit 50`,
+  );
+
+  let sentCount = 0;
+  const now = new Date();
+
+  for (const ticket of result.rows) {
+    const bhConfig = await getBusinessHoursConfig(pool, ticket.tenant_id);
+    const dailyMinutes = bhConfig
+      ? (bhConfig.endHour * 60 + bhConfig.endMinute) - (bhConfig.startHour * 60 + bhConfig.startMinute)
+      : 24 * 60;
+    const chaserDueAt = addBusinessMinutes(
+      new Date(ticket.sla_paused_at),
+      3 * Math.max(60, dailyMinutes),
+      bhConfig,
+    );
+
+    if (now.getTime() >= chaserDueAt.getTime()) {
+      await pool.query(
+        "update tickets set pending_chaser_sent_at = now(), version = version + 1, updated_at = now() where tenant_id = $1 and id = $2",
+        [ticket.tenant_id, ticket.id],
+      );
+
+      const eventId = await enqueueEvent(pool, ticket.tenant_id, "ticket", ticket.id, ticket.version + 1, "ticket.pending_chaser_sent", {
+        ticketId: ticket.id,
+        requesterId: ticket.requester_id,
+        pausedAt: ticket.sla_paused_at,
+        chaserDueAt,
+      });
+
+      await writeAudit(
+        pool,
+        ticket.tenant_id,
+        { id: null, role: "system" },
+        "ticket.pending_chaser_sent",
+        "ticket",
+        ticket.id,
+        null,
+        { requesterId: ticket.requester_id, chaserDueAt },
+        randomUUID(),
+      );
+
+      // Determine system comment author
+      let authorId = ticket.assignee_id;
+      if (!authorId) {
+        const adminUser = await pool.query<{ user_id: string }>(
+          "select user_id from memberships where tenant_id = $1 and role = 'tenant_admin' limit 1",
+          [ticket.tenant_id],
+        );
+        authorId = adminUser.rows[0]?.user_id ?? ticket.requester_id;
+      }
+
+      await pool.query(
+        `insert into ticket_comments (tenant_id, id, ticket_id, author_id, body, visibility)
+         values ($1, $2, $3, $4, $5, 'public')`,
+        [
+          ticket.tenant_id,
+          randomUUID(),
+          ticket.id,
+          authorId,
+          `Automated reminder sent to ${ticket.requester_name} after 3 business days awaiting response in Pending status.`,
+        ],
+      );
+
+      // Send notification to requester
+      const tmpl = await pool.query<{ subject: string; body: string }>(
+        "select subject, body from notification_templates where tenant_id = $1 and key = 'pending_chaser' and is_active",
+        [ticket.tenant_id],
+      );
+      const subjectTmpl = tmpl.rows[0]?.subject ?? "Reminder: Waiting for your reply on ticket #{{number}}";
+      const bodyTmpl =
+        tmpl.rows[0]?.body ??
+        "Hello {{requesterName}},\n\nYour ticket #{{number}} (\"{{subject}}\") is currently waiting on your input. If no reply is received, the ticket will be automatically resolved.\n\nPlease reply directly to this email to provide an update.";
+      const vars = {
+        number: ticket.number,
+        subject: ticket.subject,
+        requesterName: ticket.requester_name,
+      };
+
+      await pool.query(
+        `insert into notifications
+           (tenant_id, event_id, ticket_id, recipient_id, channel, dedupe_key, status, delivery_status, subject, body)
+         values ($1, $2, $3, $4, 'email', $5, 'pending', 'pending', $6, $7)
+         on conflict (tenant_id, dedupe_key) do nothing`,
+        [
+          ticket.tenant_id,
+          eventId,
+          ticket.id,
+          ticket.requester_id,
+          `${eventId}:pending_chaser:${ticket.requester_id}`,
+          renderTemplate(subjectTmpl, vars),
+          renderTemplate(bodyTmpl, vars),
+        ],
+      );
+
+      sentCount++;
+    }
+  }
+
+  return sentCount;
+}
+
 async function runMaintenance(): Promise<void> {
   const responseBreaches = await markSlaBreaches("response");
   const resolutionBreaches = await markSlaBreaches("resolution");
   if (responseBreaches + resolutionBreaches > 0) {
     log("sla_breaches_recorded", { response: responseBreaches, resolution: resolutionBreaches });
   }
+  const responseWarnings = await markSlaWarnings("response");
+  const resolutionWarnings = await markSlaWarnings("resolution");
+  if (responseWarnings + resolutionWarnings > 0) {
+    log("sla_warnings_recorded", { response: responseWarnings, resolution: resolutionWarnings });
+  }
+  const chasers = await sendPendingChasers();
+  if (chasers > 0) log("pending_chasers_sent", { count: chasers });
   const closed = await autoCloseTickets();
   if (closed > 0) log("tickets_auto_closed", { count: closed });
 }

@@ -38,12 +38,25 @@ function slaState(
   breached: string | null,
   met: string | null,
   paused: string | null,
-): "breached" | "met" | "paused" | "overdue" | "active" | null {
+  warningAt?: string | null,
+  createdAt?: string | null,
+): "breached" | "met" | "paused" | "warning" | "overdue" | "active" | null {
   if (!due) return null;
   if (breached) return "breached";
   if (met) return "met";
   if (paused) return "paused";
-  return new Date(due).getTime() < Date.now() ? "overdue" : "active";
+  const now = Date.now();
+  const dueTime = new Date(due).getTime();
+  if (dueTime < now) return "overdue";
+  if (warningAt) return "warning";
+  if (createdAt) {
+    const createdTime = new Date(createdAt).getTime();
+    const total = dueTime - createdTime;
+    if (total > 0 && (now - createdTime) / total >= 0.8) {
+      return "warning";
+    }
+  }
+  return "active";
 }
 
 type TimelineEvent = {
@@ -152,12 +165,16 @@ export function TicketDetailPage() {
     detail.sla_response_breached_at,
     detail.first_responded_at,
     detail.sla_paused_at,
+    detail.sla_response_warning_at,
+    detail.created_at,
   );
   const resolutionSla = slaState(
     detail.sla_resolution_due_at,
     detail.sla_resolution_breached_at,
     detail.resolved_at,
     detail.sla_paused_at,
+    detail.sla_resolution_warning_at,
+    detail.created_at,
   );
 
   const timeline: TimelineEvent[] = [
@@ -538,7 +555,9 @@ export function TicketDetailPage() {
             <span className="badge subtle">{detail.category_name}</span>
             {detail.reopened_count > 0 && <span className="badge subtle">Reopened {detail.reopened_count}×</span>}
             {resolutionSla === "breached" && <SlaBadge label="SLA breached" state="breached" />}
+            {resolutionSla === "warning" && <SlaBadge label="SLA at risk" state="warning" />}
             {resolutionSla === "paused" && <SlaBadge label="SLA paused" state="paused" />}
+            {detail.pending_chaser_sent_at && <span className="badge subtle">Pending reminder sent</span>}
           </div>
           {detail.merged_into && (
             <div className="callout warning" style={{ marginTop: "0.75rem" }}>
@@ -936,7 +955,7 @@ export function TicketDetailPage() {
                   <dt>Response SLA</dt>
                   <dd>
                     {formatDate(detail.sla_response_due_at)}{" "}
-                    {responseSla && <SlaBadge label={responseSla} state={responseSla} />}
+                    {responseSla && <SlaBadge label={responseSla === "warning" ? "At risk" : responseSla} state={responseSla} />}
                   </dd>
                 </div>
               )}
@@ -945,7 +964,7 @@ export function TicketDetailPage() {
                   <dt>Resolution SLA</dt>
                   <dd>
                     {formatDate(detail.sla_resolution_due_at)}{" "}
-                    {resolutionSla && <SlaBadge label={resolutionSla} state={resolutionSla} />}
+                    {resolutionSla && <SlaBadge label={resolutionSla === "warning" ? "At risk" : resolutionSla} state={resolutionSla} />}
                   </dd>
                 </div>
               )}
