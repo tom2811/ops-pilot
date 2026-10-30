@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { addBusinessMinutes, formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
+import {
+  addBusinessMinutes,
+  cleanEmailBody,
+  formatTicketNumber,
+  matchesRoutingConditions,
+  parseEmailAddress,
+  parseTicketNumberFromSubject,
+  renderTemplate,
+} from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
 describe("matchesRoutingConditions", () => {
@@ -73,6 +81,31 @@ describe("renderTemplate", () => {
         ticket: { number: "ACM-000001" },
       }),
     ).toBe("Hello Alice, ticket ACM-000001");
+  });
+});
+
+describe("inbound email helpers", () => {
+  it("parses email address and display name correctly", () => {
+    expect(parseEmailAddress("Erin Employee <employee@acme.test>")).toEqual({
+      address: "employee@acme.test",
+      name: "Erin Employee",
+    });
+    expect(parseEmailAddress("test@example.com")).toEqual({
+      address: "test@example.com",
+      name: "test",
+    });
+  });
+
+  it("extracts ticket number from subject", () => {
+    expect(parseTicketNumberFromSubject("Re: [ACM-000042] VPN issue", "ACM")).toBe(42);
+    expect(parseTicketNumberFromSubject("Re: New reply on ticket #7", "ACM")).toBe(7);
+    expect(parseTicketNumberFromSubject("Re: Ticket #123 created")).toBe(123);
+    expect(parseTicketNumberFromSubject("Hardware request without ticket")).toBeNull();
+  });
+
+  it("cleans quoted reply history from email body", () => {
+    const raw = "I restarted the router and it works now.\n\nOn Fri, Oct 30, 2026 at 4:10 PM OpsPilot wrote:\n> We received your ticket.";
+    expect(cleanEmailBody(raw)).toBe("I restarted the router and it works now.");
   });
 });
 

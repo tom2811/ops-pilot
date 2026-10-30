@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createMailer } from "./mailer.js";
 import { writeAudit } from "./audit.js";
 import { enqueueEvent } from "./outbox.js";
+import { processInboundEmail } from "./domain/inboundEmail.js";
 
 const REDACTED_BODY = "[body redacted]";
 const SMTP_NOT_CONFIGURED = "SMTP is not configured";
@@ -616,6 +617,107 @@ async function fail(event: OutboxRow, error: unknown): Promise<void> {
   log("event_failed", { eventId: event.id, attempts: event.attempts, dead, error: message });
 }
 
+function getMailpitApiUrl(): string | null {
+  if (process.env.MAILPIT_API_URL) return process.env.MAILPIT_API_URL;
+  if (workerEnv.SMTP_HOST === "opspilot-mailpit" || workerEnv.SMTP_HOST === "mailpit") {
+    return `http://${workerEnv.SMTP_HOST}:8025`;
+  }
+  if (workerEnv.SMTP_HOST === "localhost" || workerEnv.SMTP_HOST === "127.0.0.1") {
+    return "http://localhost:8025";
+  }
+  return null;
+}
+
+type MailpitMessageSummary = {
+  ID: string;
+  MessageID: string;
+  From: { Name: string; Address: string };
+  To: Array<{ Name: string; Address: string }>;
+  Subject: string;
+};
+
+type MailpitMessageDetail = {
+  ID: string;
+  MessageID: string;
+  From: { Name: string; Address: string };
+  To: Array<{ Name: string; Address: string }>;
+  Subject: string;
+  Text: string;
+  HTML: string;
+  Headers?: Record<string, string[]>;
+};
+
+async function pollMailpitInbound(): Promise<void> {
+  const mailpitUrl = getMailpitApiUrl();
+  if (!mailpitUrl) return;
+
+  try {
+    const listRes = await fetch(`${mailpitUrl}/api/v1/messages?limit=20`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!listRes.ok) return;
+    const data = (await listRes.json()) as { messages?: MailpitMessageSummary[] };
+    if (!data.messages || data.messages.length === 0) return;
+
+    for (const msg of data.messages) {
+      const fromAddr = (msg.From?.Address ?? "").toLowerCase();
+      if (
+        fromAddr === workerEnv.SMTP_FROM.toLowerCase() ||
+        fromAddr.includes("no-reply@opspilot.local") ||
+        fromAddr.includes("mailer-daemon@")
+      ) {
+        continue;
+      }
+
+      const detailRes = await fetch(`${mailpitUrl}/api/v1/message/${msg.ID}`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!detailRes.ok) continue;
+      const detail = (await detailRes.json()) as MailpitMessageDetail;
+
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const inReplyTo = detail.Headers?.["In-Reply-To"]?.[0] || detail.Headers?.["in-reply-to"]?.[0];
+        const references = detail.Headers?.["References"]?.[0] || detail.Headers?.["references"]?.[0];
+        const toAddr = detail.To?.[0]?.Address;
+
+        const res = await processInboundEmail(client, {
+          from: detail.From?.Address || fromAddr,
+          to: toAddr,
+          subject: detail.Subject || "(No subject)",
+          text: detail.Text || "",
+          html: detail.HTML || "",
+          messageId: detail.MessageID || msg.ID,
+          inReplyTo,
+          references,
+        });
+        await client.query("commit");
+
+        log("inbound_email_processed", {
+          action: res.action,
+          ticketId: res.ticketId,
+          mailpitId: msg.ID,
+        });
+
+        await fetch(`${mailpitUrl}/api/v1/messages`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ IDs: [msg.ID] }),
+          signal: AbortSignal.timeout(4000),
+        }).catch(() => {});
+      } catch (err) {
+        await client.query("rollback").catch(() => {});
+        log("inbound_email_failed", { mailpitId: msg.ID, error: String(err) });
+      } finally {
+        client.release();
+      }
+    }
+  } catch {
+    // Non-fatal if Mailpit is unreachable
+  }
+}
+
 let running = true;
 let nextMaintenance = 0;
 
@@ -626,6 +728,7 @@ async function loop(): Promise<void> {
         await runMaintenance();
         nextMaintenance = Date.now() + workerEnv.MAINTENANCE_INTERVAL_MS;
       }
+      await pollMailpitInbound();
       await processNotifications();
       await processEmails();
       const event = await claimEvent();

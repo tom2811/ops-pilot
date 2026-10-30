@@ -155,6 +155,7 @@ async function main() {
   try {
     await client.query("begin");
     const seedTenantIds = "select id from tenants where slug in ('acme', 'globex')";
+    await client.query(`delete from inbound_emails where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from ticket_comments where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from tickets where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from audit_log where tenant_id in (${seedTenantIds})`);

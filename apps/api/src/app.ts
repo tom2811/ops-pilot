@@ -19,6 +19,7 @@ import { automationRoutes } from "./routes/automation.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { auditRoutes } from "./routes/audit.js";
 import { attachmentRoutes } from "./routes/attachments.js";
+import { inboundRoutes } from "./routes/inbound.js";
 import "./types.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,6 +97,7 @@ export async function buildApp() {
   await app.register(feedbackRoutes, { prefix: "/api" });
   await app.register(reportRoutes, { prefix: "/api" });
   await app.register(auditRoutes, { prefix: "/api" });
+  await app.register(inboundRoutes, { prefix: "/api" });
 
   app.get("/api/health/live", async () => ({ ok: true }));
   app.get("/api/health", async (_req, reply) => {

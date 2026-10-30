@@ -81,6 +81,53 @@ export function renderTemplate(template: string, variables: Record<string, unkno
   });
 }
 
+export function parseEmailAddress(raw: string): { address: string; name: string } {
+  const match = raw.match(/^(?:["']?([^"']*)["']?\s*)?<([^>]+)>/);
+  if (match && match[2]) {
+    const address = match[2].trim().toLowerCase();
+    const name = match[1]?.trim() || address.split("@")[0] || "";
+    return { address, name };
+  }
+  const clean = raw.trim().toLowerCase();
+  return { address: clean, name: clean.split("@")[0] || clean };
+}
+
+export function parseTicketNumberFromSubject(subject: string, prefix?: string): number | null {
+  if (prefix) {
+    const prefixRegex = new RegExp(`\\b${prefix}-(\\d+)\\b`, "i");
+    const m = subject.match(prefixRegex);
+    if (m && m[1]) return parseInt(m[1], 10);
+  }
+  const formattedRegex = /\b[A-Z0-9]{2,10}-(\d+)\b/i;
+  const m1 = subject.match(formattedRegex);
+  if (m1 && m1[1]) return parseInt(m1[1], 10);
+
+  const hashRegex = /(?:ticket|issue)?\s*#(\d+)\b/i;
+  const m2 = subject.match(hashRegex);
+  if (m2 && m2[1]) return parseInt(m2[1], 10);
+
+  return null;
+}
+
+export function cleanEmailBody(body: string): string {
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  const result: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (
+      /^on\s.+wrote:$/i.test(trimmed) ||
+      /^---+\s*original message\s*---+$/i.test(trimmed) ||
+      /^_{5,}$/.test(trimmed) ||
+      /^>/.test(trimmed)
+    ) {
+      break;
+    }
+    result.push(line);
+  }
+  const cleaned = result.join("\n").trim();
+  return cleaned || body.trim();
+}
+
 type TransitionSeed = {
   from: string;
   to: string;
@@ -300,6 +347,19 @@ export const cannedResponseInputSchema = z.object({
 });
 
 export const cannedResponseUpdateSchema = cannedResponseInputSchema.partial();
+
+export const inboundEmailInputSchema = z.object({
+  from: z.string().trim().min(1),
+  to: z.string().trim().optional(),
+  subject: z.string().trim().min(1).max(200),
+  body: z.string().trim().max(20000).optional(),
+  text: z.string().trim().max(20000).optional(),
+  html: z.string().optional(),
+  messageId: z.string().trim().optional(),
+  inReplyTo: z.string().trim().optional(),
+  references: z.string().trim().optional(),
+});
+export type InboundEmailInput = z.infer<typeof inboundEmailInputSchema>;
 
 export const runCompleteSchema = z.object({
   status: z.enum(["completed", "failed"]),
