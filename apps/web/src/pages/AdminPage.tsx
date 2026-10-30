@@ -5,6 +5,7 @@ import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, PageSkeleton } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
 import type {
+  CannedResponse,
   Category,
   Config,
   CustomField,
@@ -22,6 +23,16 @@ function slugify(value: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 50);
 }
+
+const WEEKDAYS = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 7, label: "Sun" },
+];
 
 function fieldKey(value: string): string {
   return value
@@ -58,6 +69,7 @@ export function AdminPage() {
   const [slaCategory, setSlaCategory] = useState("");
   const [slaResponse, setSlaResponse] = useState("60");
   const [slaResolution, setSlaResolution] = useState("480");
+  const [slaBusinessHours, setSlaBusinessHours] = useState(false);
 
   const [fieldLabel, setFieldLabel] = useState("");
   const [fieldKeyValue, setFieldKeyValue] = useState("");
@@ -77,11 +89,19 @@ export function AdminPage() {
   const [editingFieldId, setEditingFieldId] = useState("");
   const [editingRuleId, setEditingRuleId] = useState("");
   const [editingSlaId, setEditingSlaId] = useState("");
+  const [editingCannedId, setEditingCannedId] = useState("");
+
+  const [cannedTitle, setCannedTitle] = useState("");
+  const [cannedShortcut, setCannedShortcut] = useState("");
+  const [cannedBody, setCannedBody] = useState("");
 
   const [settingsTimezone, setSettingsTimezone] = useState("UTC");
   const [settingsPrefix, setSettingsPrefix] = useState("OPS");
   const [settingsReopenDays, setSettingsReopenDays] = useState("14");
   const [settingsAutoCloseDays, setSettingsAutoCloseDays] = useState("7");
+  const [settingsBhStart, setSettingsBhStart] = useState("09:00");
+  const [settingsBhEnd, setSettingsBhEnd] = useState("17:00");
+  const [settingsBhDays, setSettingsBhDays] = useState<number[]>([1, 2, 3, 4, 5]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +117,11 @@ export function AdminPage() {
         setSettingsPrefix(next.settings?.ticket_prefix ?? "OPS");
         setSettingsReopenDays(String(next.settings?.reopen_window_days ?? 14));
         setSettingsAutoCloseDays(String(next.settings?.auto_close_days ?? 7));
+        setSettingsBhStart(next.settings?.business_hours_start ? next.settings.business_hours_start.slice(0, 5) : "09:00");
+        setSettingsBhEnd(next.settings?.business_hours_end ? next.settings.business_hours_end.slice(0, 5) : "17:00");
+        setSettingsBhDays(
+          next.settings?.business_days?.length ? next.settings.business_days : [1, 2, 3, 4, 5],
+        );
       })
       .catch((caught) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -208,6 +233,7 @@ export function AdminPage() {
       categoryId: slaCategory || null,
       responseMinutes: Number(slaResponse),
       resolutionMinutes: Number(slaResolution),
+      businessHoursOnly: slaBusinessHours,
     };
     void run(
       () =>
@@ -217,6 +243,7 @@ export function AdminPage() {
       editingSlaId ? "SLA policy updated." : "SLA policy created.",
     ).then(() => {
       setSlaName("");
+      setSlaBusinessHours(false);
       setEditingSlaId("");
     });
   }
@@ -287,9 +314,40 @@ export function AdminPage() {
           ticketPrefix: settingsPrefix,
           reopenWindowDays: Number(settingsReopenDays),
           autoCloseDays: Number(settingsAutoCloseDays),
+          businessHoursStart: settingsBhStart,
+          businessHoursEnd: settingsBhEnd,
+          businessDays: settingsBhDays,
         }),
       "Workspace settings updated.",
     );
+  }
+
+  function submitCanned(event: FormEvent): void {
+    event.preventDefault();
+    const body = {
+      title: cannedTitle,
+      shortcut: cannedShortcut,
+      body: cannedBody,
+    };
+    void run(
+      () =>
+        editingCannedId
+          ? patch(`/t/${tenantSlug}/canned-responses/${editingCannedId}`, body)
+          : post(`/t/${tenantSlug}/canned-responses`, body),
+      editingCannedId ? "Canned response updated." : "Canned response created.",
+    ).then(() => {
+      setCannedTitle("");
+      setCannedShortcut("");
+      setCannedBody("");
+      setEditingCannedId("");
+    });
+  }
+
+  function editCanned(canned: CannedResponse): void {
+    setEditingCannedId(canned.id);
+    setCannedTitle(canned.title);
+    setCannedShortcut(canned.shortcut);
+    setCannedBody(canned.body);
   }
 
   function deactivate(path: string, label: string): void {
@@ -348,6 +406,7 @@ export function AdminPage() {
     setSlaCategory(policy.category_id ?? "");
     setSlaResponse(String(policy.response_minutes));
     setSlaResolution(String(policy.resolution_minutes));
+    setSlaBusinessHours(Boolean(policy.business_hours_only));
   }
 
   const teamNameById = new Map(config.teams.map((team) => [team.id, team.name]));
@@ -400,6 +459,50 @@ export function AdminPage() {
               required
             />
           </label>
+          <label>
+            Business hours start
+            <input
+              type="time"
+              value={settingsBhStart}
+              onChange={(event) => setSettingsBhStart(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Business hours end
+            <input
+              type="time"
+              value={settingsBhEnd}
+              onChange={(event) => setSettingsBhEnd(event.target.value)}
+              required
+            />
+          </label>
+          <p className="form-note span-2">
+            Business hours use the workspace timezone and apply to SLA policies marked business hours only.
+          </p>
+          <fieldset className="field-group span-2">
+            <legend>Business days</legend>
+            {WEEKDAYS.map((day) => {
+              const checked = settingsBhDays.includes(day.value);
+              return (
+                <label className="check-row" key={day.value}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={checked && settingsBhDays.length === 1}
+                    onChange={(event) =>
+                      setSettingsBhDays((current) =>
+                        event.target.checked
+                          ? [...current, day.value].sort((a, b) => a - b)
+                          : current.filter((value) => value !== day.value),
+                      )
+                    }
+                  />
+                  {day.label}
+                </label>
+              );
+            })}
+          </fieldset>
           <div className="form-actions span-2">
             <button className="button secondary" disabled={busy}>
               Save settings
@@ -674,6 +777,14 @@ export function AdminPage() {
                   />
                 </label>
               </div>
+              <label className="check-row span-2">
+                <input
+                  type="checkbox"
+                  checked={slaBusinessHours}
+                  onChange={(event) => setSlaBusinessHours(event.target.checked)}
+                />
+                Business hours only (pause clock outside operating hours)
+              </label>
               <div className="form-actions span-2">
                 <button className="button secondary" disabled={busy}>
                   {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
@@ -723,6 +834,65 @@ export function AdminPage() {
                 </button>
                 {editingRuleId && (
                   <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <section className="card">
+            <h2>{editingCannedId ? "Edit canned response" : "Add a canned response"}</h2>
+            <p className="muted">
+              Snippets for fast agent replies. Placeholders like <code>{"{{requester.name}}"}</code>, <code>{"{{ticket.number}}"}</code>, <code>{"{{agent.name}}"}</code> are interpolated when inserted.
+            </p>
+            <form className="form-grid" onSubmit={submitCanned}>
+              <label>
+                Title
+                <input
+                  value={cannedTitle}
+                  onChange={(event) => setCannedTitle(event.target.value)}
+                  placeholder="e.g. Acknowledge and investigate"
+                  maxLength={120}
+                  required
+                />
+              </label>
+              <label>
+                Shortcut
+                <input
+                  value={cannedShortcut}
+                  onChange={(event) => setCannedShortcut(event.target.value)}
+                  placeholder="e.g. ack"
+                  maxLength={50}
+                  required
+                />
+              </label>
+              <label className="span-2">
+                Response body
+                <textarea
+                  value={cannedBody}
+                  onChange={(event) => setCannedBody(event.target.value)}
+                  rows={4}
+                  placeholder="Write the canned response message..."
+                  maxLength={20000}
+                  required
+                />
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingCannedId ? "Update canned response" : "Create canned response"}
+                </button>
+                {editingCannedId && (
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => {
+                      setEditingCannedId("");
+                      setCannedTitle("");
+                      setCannedShortcut("");
+                      setCannedBody("");
+                    }}
+                  >
                     Cancel
                   </button>
                 )}
@@ -808,7 +978,8 @@ export function AdminPage() {
                       <span className="muted small">
                         {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
                         {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
-                        {policy.response_minutes}m / {policy.resolution_minutes}m
+                        {policy.response_minutes}m / {policy.resolution_minutes}m ·{" "}
+                        {policy.business_hours_only ? "business hours" : "24x7"}
                       </span>
                     </div>
                     <ConfigActions
@@ -857,6 +1028,28 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editRule(rule)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card">
+            <h2>Canned responses</h2>
+            {(config.canned_responses?.length ?? 0) === 0 ? (
+              <EmptyState title="No canned responses">Save common replies as snippets for agents.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.canned_responses?.map((canned) => (
+                  <li key={canned.id}>
+                    <div>
+                      <strong>{canned.title}</strong>
+                      <span className="muted small">/{canned.shortcut} · {canned.body.slice(0, 50)}{canned.body.length > 50 ? "..." : ""}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editCanned(canned)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/canned-responses/${canned.id}`, canned.title)}
                     />
                   </li>
                 ))}

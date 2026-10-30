@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
+import { addBusinessMinutes, formatTicketNumber, matchesRoutingConditions, renderTemplate } from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
 describe("matchesRoutingConditions", () => {
@@ -64,5 +64,81 @@ describe("renderTemplate", () => {
     expect(renderTemplate("Hi {{name}}, ticket {{number}} {{missing}}", { name: "Sam", number: 42 })).toBe(
       "Hi Sam, ticket 42 ",
     );
+  });
+
+  it("resolves nested properties", () => {
+    expect(
+      renderTemplate("Hello {{requester.name}}, ticket {{ticket.number}}", {
+        requester: { name: "Alice" },
+        ticket: { number: "ACM-000001" },
+      }),
+    ).toBe("Hello Alice, ticket ACM-000001");
+  });
+});
+
+describe("addBusinessMinutes", () => {
+  const config = {
+    startHour: 9,
+    startMinute: 0,
+    endHour: 17,
+    endMinute: 0,
+    businessDays: [1, 2, 3, 4, 5], // Mon-Fri
+  };
+
+  it("adds minutes within the same business day", () => {
+    // Mon Oct 26 2026, 10:00 UTC
+    const start = new Date("2026-10-26T10:00:00Z");
+    const result = addBusinessMinutes(start, 120, config);
+    expect(result.toISOString()).toBe("2026-10-26T12:00:00.000Z");
+  });
+
+  it("rolls over to next business day when exceeding closing time", () => {
+    // Mon Oct 26 2026, 16:00 UTC (1 hour before close at 17:00)
+    // Add 120 mins -> 60 mins Monday, remaining 60 mins Tuesday 09:00 -> 10:00
+    const start = new Date("2026-10-26T16:00:00Z");
+    const result = addBusinessMinutes(start, 120, config);
+    expect(result.toISOString()).toBe("2026-10-27T10:00:00.000Z");
+  });
+
+  it("skips weekends when rolling over Friday evening", () => {
+    // Fri Oct 30 2026, 16:30 UTC (30 mins before close)
+    // Add 60 mins -> 30 mins Friday, rolls over weekend to Monday Nov 2 09:30 UTC
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, config);
+    expect(result.toISOString()).toBe("2026-11-02T09:30:00.000Z");
+  });
+
+  it("falls back to calendar addition when config is omitted", () => {
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60);
+    expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
+  });
+
+  it("uses the tenant timezone with a half-hour offset", () => {
+    // Fri Oct 30 2026, 16:30 in Yangon (UTC+6:30). 30 minutes remain before 17:00.
+    // The rest rolls over the weekend to Mon Nov 2 09:30 in Yangon.
+    const start = new Date("2026-10-30T10:00:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, timeZone: "Asia/Yangon" });
+    expect(result.toISOString()).toBe("2026-11-02T03:00:00.000Z");
+  });
+
+  it("uses the tenant timezone in Bangkok", () => {
+    // Mon Nov 2 2026, 10:00 in Bangkok (UTC+7), add two business hours.
+    const start = new Date("2026-11-02T03:00:00Z");
+    const result = addBusinessMinutes(start, 120, { ...config, timeZone: "Asia/Bangkok" });
+    expect(result.toISOString()).toBe("2026-11-02T05:00:00.000Z");
+  });
+
+  it("respects custom business days", () => {
+    // Fri Oct 30 2026, 16:30 UTC. Only Sunday is a business day.
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, businessDays: [7] });
+    expect(result.toISOString()).toBe("2026-11-01T10:00:00.000Z");
+  });
+
+  it("falls back to calendar addition when the window is invalid", () => {
+    const start = new Date("2026-10-30T16:30:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, startHour: 17, endHour: 9 });
+    expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
   });
 });

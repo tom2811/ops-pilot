@@ -45,11 +45,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: ["sh", "-c", "corepack pnpm db:role && corepack pnpm db:migrate && corepack pnpm db:seed"]
+    command: ["sh", "-c", "corepack pnpm db:role && corepack pnpm db:migrate"]
     environment: *app-env
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["corepack", "pnpm", "db:seed"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["demo"]
     restart: "no"
 
   api:

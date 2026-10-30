@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { renderTemplate, type Role, type Stage } from "@opspilot/core";
+import { addBusinessMinutes, renderTemplate, type BusinessHoursConfig, type Role, type Stage } from "@opspilot/core";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
 import { requestFeedback } from "./feedback.js";
@@ -241,6 +241,35 @@ export async function listTickets(
   };
 }
 
+async function getBusinessHoursConfig(
+  client: pg.PoolClient,
+  tenantId: string,
+): Promise<BusinessHoursConfig | undefined> {
+  const settings = await client.query<{
+    timezone: string | null;
+    business_hours_start: string;
+    business_hours_end: string;
+    business_days: number[];
+  }>(
+    `select timezone, business_hours_start, business_hours_end, business_days
+       from tenant_settings
+      where tenant_id = $1`,
+    [tenantId],
+  );
+  const row = settings.rows[0];
+  if (!row) return undefined;
+  const [sh = 9, sm = 0] = (row.business_hours_start || "09:00").split(":").map(Number);
+  const [eh = 17, em = 0] = (row.business_hours_end || "17:00").split(":").map(Number);
+  return {
+    startHour: sh,
+    startMinute: sm,
+    endHour: eh,
+    endMinute: em,
+    businessDays: row.business_days || [1, 2, 3, 4, 5],
+    timeZone: row.timezone || "UTC",
+  };
+}
+
 export async function createTicket(
   client: pg.PoolClient,
   tenantId: string,
@@ -282,8 +311,13 @@ export async function createTicket(
   const number = counter.rows[0]?.number;
   if (!number) throw new Error("Could not allocate ticket number");
 
-  const sla = await client.query<{ id: string; response_minutes: number; resolution_minutes: number }>(
-    `select id, response_minutes, resolution_minutes
+  const sla = await client.query<{
+    id: string;
+    response_minutes: number;
+    resolution_minutes: number;
+    business_hours_only: boolean;
+  }>(
+    `select id, response_minutes, resolution_minutes, coalesce(business_hours_only, false) as business_hours_only
      from sla_policies
      where tenant_id = $1 and is_active
        and (priority_id is null or priority_id = $2)
@@ -293,15 +327,23 @@ export async function createTicket(
     [tenantId, input.priorityId, input.categoryId],
   );
   const slaPolicy = sla.rows[0];
+  const bhConfig = slaPolicy?.business_hours_only
+    ? await getBusinessHoursConfig(client, tenantId)
+    : undefined;
+  const now = new Date();
+  const responseDueAt = slaPolicy?.response_minutes
+    ? addBusinessMinutes(now, slaPolicy.response_minutes, bhConfig)
+    : null;
+  const resolutionDueAt = slaPolicy?.resolution_minutes
+    ? addBusinessMinutes(now, slaPolicy.resolution_minutes, bhConfig)
+    : null;
 
   const id = randomUUID();
   await client.query(
     `insert into tickets
       (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id, custom_fields,
        sla_policy_id, sla_response_due_at, sla_resolution_due_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-             now() + ($12::text || ' minutes')::interval,
-             now() + ($13::text || ' minutes')::interval)`,
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       tenantId,
       id,
@@ -314,8 +356,8 @@ export async function createTicket(
       newStatus.id,
       JSON.stringify(customFields),
       slaPolicy?.id ?? null,
-      slaPolicy?.response_minutes ?? null,
-      slaPolicy?.resolution_minutes ?? null,
+      responseDueAt,
+      resolutionDueAt,
     ],
   );
 
@@ -420,11 +462,16 @@ export async function updateTicket(
 
   const slaChanged = categoryId !== ticket.category_id || priorityId !== ticket.priority_id;
   let slaPolicyId: string | null = null;
-  let responseMinutes: number | null = null;
-  let resolutionMinutes: number | null = null;
+  let responseDueAt: Date | null = null;
+  let resolutionDueAt: Date | null = null;
   if (slaChanged) {
-    const sla = await client.query<{ id: string; response_minutes: number; resolution_minutes: number }>(
-      `select id, response_minutes, resolution_minutes
+    const sla = await client.query<{
+      id: string;
+      response_minutes: number;
+      resolution_minutes: number;
+      business_hours_only: boolean;
+    }>(
+      `select id, response_minutes, resolution_minutes, coalesce(business_hours_only, false) as business_hours_only
        from sla_policies
        where tenant_id = $1 and is_active
          and (priority_id is null or priority_id = $2)
@@ -435,8 +482,14 @@ export async function updateTicket(
     );
     const policy = sla.rows[0];
     slaPolicyId = policy?.id ?? null;
-    responseMinutes = policy?.response_minutes ?? null;
-    resolutionMinutes = policy?.resolution_minutes ?? null;
+    if (policy) {
+      const bhConfig = policy.business_hours_only
+        ? await getBusinessHoursConfig(client, tenantId)
+        : undefined;
+      const baseDate = new Date(ticket.created_at);
+      responseDueAt = addBusinessMinutes(baseDate, policy.response_minutes, bhConfig);
+      resolutionDueAt = addBusinessMinutes(baseDate, policy.resolution_minutes, bhConfig);
+    }
   }
 
   const updated = await client.query(
@@ -447,10 +500,8 @@ export async function updateTicket(
        priority_id = $6,
        custom_fields = $7,
        sla_policy_id = case when $8 then $9 else sla_policy_id end,
-       sla_response_due_at = case when $8 then created_at + ($10::text || ' minutes')::interval
-                                  else sla_response_due_at end,
-       sla_resolution_due_at = case when $8 then created_at + ($11::text || ' minutes')::interval
-                                    else sla_resolution_due_at end,
+       sla_response_due_at = case when $8 then $10 else sla_response_due_at end,
+       sla_resolution_due_at = case when $8 then $11 else sla_resolution_due_at end,
        sla_response_breached_at = case when $8 then null else sla_response_breached_at end,
        sla_resolution_breached_at = case when $8 then null else sla_resolution_breached_at end,
        version = version + 1,
@@ -466,8 +517,8 @@ export async function updateTicket(
       JSON.stringify(customFields),
       slaChanged,
       slaPolicyId,
-      responseMinutes,
-      resolutionMinutes,
+      responseDueAt,
+      resolutionDueAt,
       input.expectedVersion,
     ],
   );

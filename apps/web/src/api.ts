@@ -20,11 +20,19 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text();
   const data: unknown = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const message =
+    const base =
       typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
         ? data.error
         : `Request failed (${response.status})`;
-    throw new ApiError(message, response.status);
+    const issues =
+      typeof data === "object" && data !== null && "issues" in data && Array.isArray(data.issues)
+        ? data.issues
+        : [];
+    const firstIssue = issues.find(
+      (issue: unknown): issue is { message: string } =>
+        typeof issue === "object" && issue !== null && "message" in issue && typeof issue.message === "string",
+    );
+    throw new ApiError(firstIssue ? `${base}: ${firstIssue.message}` : base, response.status);
   }
   return data as T;
 }

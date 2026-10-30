@@ -63,7 +63,19 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: strin
 
 export function renderTemplate(template: string, variables: Record<string, unknown>): string {
   return template.replace(/\{\{\s*([a-z0-9_.]+)\s*\}\}/gi, (_match, key: string) => {
-    const value = variables[key];
+    let value = variables[key];
+    if (value === undefined && key.includes(".")) {
+      const parts = key.split(".");
+      let current: unknown = variables;
+      for (const segment of parts) {
+        if (current === null || current === undefined || typeof current !== "object") {
+          current = undefined;
+          break;
+        }
+        current = (current as Record<string, unknown>)[segment];
+      }
+      value = current;
+    }
     if (value === null || value === undefined) return "";
     return Array.isArray(value) ? value.join(", ") : String(value);
   });
@@ -231,17 +243,35 @@ export const ticketUpdateSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
 });
 
-export const tenantSettingsInputSchema = z.object({
-  timezone: z.string().trim().min(1).max(80),
-  ticketPrefix: z
-    .string()
-    .trim()
-    .min(2)
-    .max(10)
-    .regex(/^[A-Z0-9]+$/),
-  reopenWindowDays: z.number().int().min(0).max(3650),
-  autoCloseDays: z.number().int().min(0).max(3650),
-});
+export const tenantSettingsInputSchema = z
+  .object({
+    timezone: z.string().trim().min(1).max(80).refine(isValidTimeZone, "Invalid timezone"),
+    ticketPrefix: z
+      .string()
+      .trim()
+      .min(2)
+      .max(10)
+      .regex(/^[A-Z0-9]+$/),
+    reopenWindowDays: z.number().int().min(0).max(3650),
+    autoCloseDays: z.number().int().min(0).max(3650),
+    businessHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/).optional(),
+    businessHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/).optional(),
+    businessDays: z.array(z.number().int().min(1).max(7)).min(1).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.businessHoursStart || !value.businessHoursEnd) return;
+    const start = value.businessHoursStart.split(":").map(Number);
+    const end = value.businessHoursEnd.split(":").map(Number);
+    const startMinutes = (start[0] ?? 0) * 60 + (start[1] ?? 0);
+    const endMinutes = (end[0] ?? 0) * 60 + (end[1] ?? 0);
+    if (startMinutes >= endMinutes) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["businessHoursEnd"],
+        message: "Business hours end must be after start",
+      });
+    }
+  });
 
 export const slaPolicyInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -249,6 +279,7 @@ export const slaPolicyInputSchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   responseMinutes: z.number().int().min(1).max(525_600),
   resolutionMinutes: z.number().int().min(1).max(525_600),
+  businessHoursOnly: z.boolean().optional(),
 });
 
 export const notificationTemplateInputSchema = z.object({
@@ -256,6 +287,19 @@ export const notificationTemplateInputSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   isActive: z.boolean().default(true),
 });
+
+export const cannedResponseInputSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  shortcut: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .regex(/^[a-z0-9_-]+$/i, "Shortcut must contain only letters, numbers, hyphens, and underscores"),
+  body: z.string().trim().min(1).max(20000),
+});
+
+export const cannedResponseUpdateSchema = cannedResponseInputSchema.partial();
 
 export const runCompleteSchema = z.object({
   status: z.enum(["completed", "failed"]),
@@ -339,4 +383,164 @@ export function stagePausesResolution(stage: Stage): boolean {
 
 export function stageStopsResolution(stage: Stage): boolean {
   return stage === "resolved" || stage === "closed";
+}
+
+export type BusinessHoursConfig = {
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+  businessDays: number[];
+  timeZone?: string;
+};
+
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  weekday: number;
+};
+
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function zonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = formatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    formatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function zonedParts(date: Date, timeZone: string): ZonedParts {
+  const values: Record<string, number> = {};
+  for (const part of zonedFormatter(timeZone).formatToParts(date)) {
+    if (part.type !== "literal") values[part.type] = Number(part.value);
+  }
+  const year = values.year ?? 0;
+  const month = values.month ?? 1;
+  const day = values.day ?? 1;
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() || 7;
+  return {
+    year,
+    month,
+    day,
+    hour: values.hour ?? 0,
+    minute: values.minute ?? 0,
+    second: values.second ?? 0,
+    weekday,
+  };
+}
+
+function zonedTimeToUtc(
+  parts: { year: number; month: number; day: number; hour: number; minute: number; second: number },
+  timeZone: string,
+  milliseconds: number,
+): Date {
+  const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  let timestamp = target;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const actual = zonedParts(new Date(timestamp), timeZone);
+    const actualTimestamp = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second);
+    const offset = target - actualTimestamp;
+    if (offset === 0) break;
+    timestamp += offset;
+  }
+  return new Date(timestamp + milliseconds);
+}
+
+export function addBusinessMinutes(
+  from: Date,
+  minutesToAdd: number,
+  config?: BusinessHoursConfig,
+): Date {
+  if (!config || minutesToAdd <= 0) {
+    return new Date(from.getTime() + minutesToAdd * 60000);
+  }
+  const timeZone = config.timeZone && isValidTimeZone(config.timeZone) ? config.timeZone : "UTC";
+  const startHour = config.startHour;
+  const startMinute = config.startMinute;
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = config.endHour * 60 + config.endMinute;
+  const businessDays = new Set(config.businessDays.filter((day) => day >= 1 && day <= 7));
+  if (endTotal <= startTotal || businessDays.size === 0) {
+    return new Date(from.getTime() + minutesToAdd * 60000);
+  }
+
+  const milliseconds = from.getUTCMilliseconds();
+  let cursor = new Date(from);
+  let remaining = minutesToAdd;
+
+  function dayStart(parts: ZonedParts, daysAhead: number): Date {
+    const next = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysAhead));
+    return zonedTimeToUtc(
+      {
+        year: next.getUTCFullYear(),
+        month: next.getUTCMonth() + 1,
+        day: next.getUTCDate(),
+        hour: startHour,
+        minute: startMinute,
+        second: 0,
+      },
+      timeZone,
+      milliseconds,
+    );
+  }
+
+  for (let guard = 0; remaining > 0 && guard < 10000; guard += 1) {
+    const local = zonedParts(cursor, timeZone);
+    const currentMins = local.hour * 60 + local.minute;
+
+    if (!businessDays.has(local.weekday) || currentMins >= endTotal) {
+      cursor = dayStart(local, 1);
+      continue;
+    }
+
+    if (currentMins < startTotal) {
+      const start = dayStart(local, 0);
+      cursor = start.getTime() > cursor.getTime() ? start : dayStart(local, 1);
+      continue;
+    }
+
+    const availableToday = endTotal - currentMins;
+    if (remaining <= availableToday) {
+      const total = currentMins + remaining;
+      cursor = zonedTimeToUtc(
+        {
+          ...local,
+          hour: Math.floor(total / 60),
+          minute: total % 60,
+        },
+        timeZone,
+        milliseconds,
+      );
+      remaining = 0;
+    } else {
+      remaining -= availableToday;
+      cursor = dayStart(local, 1);
+    }
+  }
+
+  return cursor;
 }
