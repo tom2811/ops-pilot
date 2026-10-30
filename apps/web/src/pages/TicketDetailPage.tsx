@@ -5,8 +5,33 @@ import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } f
 import { useAuth } from "../auth.js";
 import { DetailSkeleton, EmptyState, ErrorAlert, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
-import type { Config, CustomField, TicketDetail } from "../types.js";
+import type { Config, CustomField, TicketDetail, TicketLink, TicketLinkType } from "../types.js";
 import { CustomFieldInput } from "./TicketsPage.js";
+
+function linkTypeLabel(type: TicketLinkType): string {
+  switch (type) {
+    case "relates_to":
+      return "Relates to";
+    case "duplicates":
+      return "Duplicates";
+    case "duplicated_by":
+      return "Duplicated by";
+    case "blocks":
+      return "Blocks";
+    case "blocked_by":
+      return "Blocked by";
+    case "causes":
+      return "Causes";
+    case "caused_by":
+      return "Caused by";
+    case "merged_into":
+      return "Merged into";
+    case "merged_from":
+      return "Merged from";
+    default:
+      return type;
+  }
+}
 
 function slaState(
   due: string | null,
@@ -65,6 +90,17 @@ export function TicketDetailPage() {
   const [editBusy, setEditBusy] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [fileKey, setFileKey] = useState(0);
+
+  const [linkType, setLinkType] = useState<TicketLinkType>("relates_to");
+  const [targetTicketNum, setTargetTicketNum] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [showAddLink, setShowAddLink] = useState(false);
+
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeTargetNum, setMergeTargetNum] = useState("");
+  const [mergeDirection, setMergeDirection] = useState<"merge_into_this" | "merge_this_into">("merge_into_this");
+  const [mergeReason, setMergeReason] = useState("");
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,6 +404,96 @@ export function TicketDetailPage() {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  async function submitCreateLink(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    const num = parseInt(targetTicketNum.trim(), 10);
+    if (isNaN(num) || num <= 0) {
+      setError("Valid ticket number is required");
+      return;
+    }
+    setLinkBusy(true);
+    setError(null);
+    try {
+      await post(`/t/${tenantSlug}/tickets/${ticketId}/links`, {
+        targetTicketNumber: num,
+        linkType,
+      });
+      setTargetTicketNum("");
+      setShowAddLink(false);
+      await reload("Ticket linked.");
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  async function removeLink(linkId: string): Promise<void> {
+    const confirmed = await confirm({
+      title: "Remove ticket link?",
+      body: "Are you sure you want to remove this relationship?",
+      confirmLabel: "Unlink",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await del(`/t/${tenantSlug}/tickets/${ticketId}/links/${linkId}`);
+      await reload("Link removed.");
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function closeMergeModal(): void {
+    setShowMergeModal(false);
+    setMergeTargetNum("");
+    setMergeReason("");
+  }
+
+  async function submitMerge(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    const num = parseInt(mergeTargetNum.trim(), 10);
+    if (isNaN(num) || num <= 0) {
+      setError("Valid ticket number is required");
+      return;
+    }
+    setMergeBusy(true);
+    setError(null);
+    try {
+      const res = await post<{
+        primaryTicketId: string;
+        secondaryTicketId: string;
+        primaryNumber: number;
+        secondaryNumber: number;
+        redirectedFromPrimaryNumber?: number | null;
+      }>(`/t/${tenantSlug}/tickets/${ticketId}/merge`, {
+        targetTicketNumber: num,
+        direction: mergeDirection,
+        reason: mergeReason.trim() || undefined,
+      });
+      setShowMergeModal(false);
+      setMergeTargetNum("");
+      setMergeReason("");
+      const autoRedirectMsg = res.redirectedFromPrimaryNumber
+        ? ` (target #${res.redirectedFromPrimaryNumber} was previously merged into #${res.primaryNumber})`
+        : "";
+      if (mergeDirection === "merge_this_into") {
+        toast.success(`Ticket merged into #${res.primaryNumber}${autoRedirectMsg}.`);
+        navigate(`/t/${tenantSlug}/tickets/${res.primaryTicketId}`);
+      } else {
+        await reload(`Merged ticket #${res.secondaryNumber} into this ticket${autoRedirectMsg}.`);
+      }
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setMergeBusy(false);
+    }
+  }
+
   const canEdit =
     role === "tenant_admin" ||
     role === "agent" ||
@@ -394,6 +520,11 @@ export function TicketDetailPage() {
               <button className="button secondary" onClick={startEditing}>
                 Edit ticket
               </button>
+              {canAgent && !detail.merged_into && (
+                <button className="button secondary" onClick={() => setShowMergeModal(true)}>
+                  Merge ticket
+                </button>
+              )}
               {role === "tenant_admin" && (
                 <button className="button ghost danger" onClick={() => void removeTicket()} disabled={busy}>
                   Delete
@@ -409,6 +540,18 @@ export function TicketDetailPage() {
             {resolutionSla === "breached" && <SlaBadge label="SLA breached" state="breached" />}
             {resolutionSla === "paused" && <SlaBadge label="SLA paused" state="paused" />}
           </div>
+          {detail.merged_into && (
+            <div className="callout warning" style={{ marginTop: "0.75rem" }}>
+              <strong>Ticket merged</strong>
+              <p>
+                This ticket was merged into{" "}
+                <Link to={`/t/${tenantSlug}/tickets/${detail.merged_into.id}`}>
+                  {formatTicketNumber(prefix, detail.merged_into.number)}: {detail.merged_into.subject}
+                </Link>
+                . It is closed and incoming replies are redirected.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -567,6 +710,119 @@ export function TicketDetailPage() {
               </form>
             )}
           </section>
+
+          {canAgent && (
+            <section className="card">
+              <div className="section-heading">
+                <h2>Linked tickets</h2>
+                <span className="muted small">
+                  {detail.links?.length ?? 0} {detail.links?.length === 1 ? "link" : "links"}
+                </span>
+              </div>
+
+              {(!detail.links || detail.links.length === 0) && !showAddLink ? (
+                <EmptyState title="No linked tickets">
+                  Link related tickets, blockers, duplicates, or incident causes.
+                </EmptyState>
+              ) : null}
+
+              {detail.links && detail.links.length > 0 && (
+                <ul className="attachment-list">
+                  {detail.links.map((link) => (
+                    <li key={link.id}>
+                      <div>
+                        <span className="badge subtle" style={{ marginRight: "0.5rem" }}>
+                          {linkTypeLabel(link.link_type)}
+                        </span>
+                        <Link to={`/t/${tenantSlug}/tickets/${link.linked_ticket_id}`}>
+                          {formatTicketNumber(prefix, link.linked_ticket_number)}: {link.linked_ticket_subject}
+                        </Link>
+                        <span className="muted small" style={{ marginLeft: "0.5rem" }}>
+                          ({link.linked_ticket_status})
+                        </span>
+                      </div>
+                      {link.link_type !== "merged_into" && link.link_type !== "merged_from" && (
+                        <button
+                          type="button"
+                          className="button ghost small"
+                          disabled={busy}
+                          onClick={() => void removeLink(link.id)}
+                        >
+                          Unlink
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {!showAddLink && (
+                <div style={{ marginTop: "1rem" }}>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => setShowAddLink(true)}
+                  >
+                    Link ticket
+                  </button>
+                </div>
+              )}
+
+              {showAddLink && (
+                <form
+                  className="stack"
+                  style={{ marginTop: "1rem", borderTop: "1px solid var(--hairline)", paddingTop: "1rem" }}
+                  onSubmit={(event) => void submitCreateLink(event)}
+                >
+                  <div className="inline-fields">
+                    <label>
+                      Relationship
+                      <Select
+                        ariaLabel="Relationship"
+                        value={linkType}
+                        onChange={(val) => setLinkType(val as TicketLinkType)}
+                        options={[
+                          { value: "relates_to", label: "Relates to" },
+                          { value: "blocks", label: "Blocks" },
+                          { value: "blocked_by", label: "Blocked by" },
+                          { value: "duplicates", label: "Duplicates" },
+                          { value: "duplicated_by", label: "Duplicated by" },
+                          { value: "causes", label: "Causes" },
+                          { value: "caused_by", label: "Caused by" },
+                        ]}
+                      />
+                    </label>
+                    <label>
+                      Target ticket number
+                      <input
+                        type="number"
+                        placeholder="e.g. 102"
+                        value={targetTicketNum}
+                        onChange={(e) => setTargetTicketNum(e.target.value)}
+                        required
+                        min={1}
+                      />
+                    </label>
+                  </div>
+                  <div className="form-footer" style={{ display: "flex", gap: "0.5rem" }}>
+                    <button className="button small" disabled={linkBusy || !targetTicketNum}>
+                      {linkBusy ? "Linking..." : "Create link"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button ghost small"
+                      onClick={() => {
+                        setShowAddLink(false);
+                        setTargetTicketNum("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
+          )}
 
           <section className="card">
             <div className="section-heading">
@@ -784,6 +1040,82 @@ export function TicketDetailPage() {
           </section>
         </aside>
       </div>
+
+      {showMergeModal && (
+        <div className="dialog-backdrop" onClick={closeMergeModal}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="section-heading">
+              <h2>Merge ticket</h2>
+              <button
+                type="button"
+                className="button ghost small"
+                onClick={closeMergeModal}
+              >
+                Close
+              </button>
+            </div>
+            <p className="prose muted small">
+              Combine two tickets. The secondary ticket will be closed and conversation history combined.
+            </p>
+            <form className="stack" onSubmit={(e) => void submitMerge(e)}>
+              <label>
+                Target ticket number
+                <input
+                  type="number"
+                  placeholder="e.g. 102"
+                  value={mergeTargetNum}
+                  onChange={(e) => setMergeTargetNum(e.target.value)}
+                  required
+                  min={1}
+                />
+              </label>
+              <label>
+                Direction
+                <Select
+                  ariaLabel="Merge direction"
+                  value={mergeDirection}
+                  onChange={(val) => setMergeDirection(val as "merge_into_this" | "merge_this_into")}
+                  options={[
+                    {
+                      value: "merge_into_this",
+                      label: `Merge #${mergeTargetNum || "X"} into this ticket (${formatTicketNumber(prefix, detail.number)})`,
+                    },
+                    {
+                      value: "merge_this_into",
+                      label: `Merge this ticket into #${mergeTargetNum || "X"}`,
+                    },
+                  ]}
+                />
+              </label>
+              <label>
+                Reason (optional)
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Duplicate report from email intake"
+                  value={mergeReason}
+                  onChange={(e) => setMergeReason(e.target.value)}
+                />
+              </label>
+              <div className="dialog-actions">
+                <button
+                  type="button"
+                  className="button ghost"
+                  onClick={closeMergeModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="button danger"
+                  disabled={mergeBusy || !mergeTargetNum}
+                >
+                  {mergeBusy ? "Merging..." : "Confirm merge"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -129,6 +129,7 @@ export type Ticket = {
   sla_response_breached_at: string | null;
   sla_resolution_breached_at: string | null;
   sla_paused_at: string | null;
+  merged_into_ticket_id?: string | null;
   created_at: string;
   updated_at: string;
   status_key: string;
@@ -185,6 +186,28 @@ export type Transition = {
   requiresReason: boolean;
 };
 
+export type TicketLinkType =
+  | "relates_to"
+  | "duplicates"
+  | "duplicated_by"
+  | "blocks"
+  | "blocked_by"
+  | "causes"
+  | "caused_by"
+  | "merged_into"
+  | "merged_from";
+
+export type TicketLink = {
+  id: string;
+  link_type: TicketLinkType;
+  linked_ticket_id: string;
+  linked_ticket_number: number;
+  linked_ticket_subject: string;
+  linked_ticket_status: string;
+  linked_ticket_stage: string;
+  created_at: string;
+};
+
 export type Attachment = {
   id: string;
   filename: string;
@@ -202,6 +225,8 @@ export type TicketDetail = Ticket & {
   updates: TicketUpdate[];
   attachments: Attachment[];
   allowed_transitions: Transition[];
+  links?: TicketLink[];
+  merged_into?: { id: string; number: number; subject: string } | null;
 };
 
 export type TicketList = {

@@ -290,6 +290,51 @@ export const ticketUpdateSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
 });
 
+export const TICKET_LINK_TYPES = [
+  "relates_to",
+  "duplicates",
+  "duplicated_by",
+  "blocks",
+  "blocked_by",
+  "causes",
+  "caused_by",
+  "merged_into",
+  "merged_from",
+] as const;
+
+export type TicketLinkType = (typeof TICKET_LINK_TYPES)[number];
+
+export const INVERSE_LINK_TYPES: Record<TicketLinkType, TicketLinkType> = {
+  relates_to: "relates_to",
+  duplicates: "duplicated_by",
+  duplicated_by: "duplicates",
+  blocks: "blocked_by",
+  blocked_by: "blocks",
+  causes: "caused_by",
+  caused_by: "causes",
+  merged_into: "merged_from",
+  merged_from: "merged_into",
+};
+
+export const createTicketLinkSchema = z.object({
+  targetTicketNumber: z.coerce.number().int().positive(),
+  linkType: z.enum([
+    "relates_to",
+    "duplicates",
+    "duplicated_by",
+    "blocks",
+    "blocked_by",
+    "causes",
+    "caused_by",
+  ]),
+});
+
+export const mergeTicketSchema = z.object({
+  targetTicketNumber: z.coerce.number().int().positive(),
+  direction: z.enum(["merge_into_this", "merge_this_into"]).default("merge_into_this"),
+  reason: z.string().trim().max(1000).optional(),
+});
+
 export const tenantSettingsInputSchema = z
   .object({
     timezone: z.string().trim().min(1).max(80).refine(isValidTimeZone, "Invalid timezone"),

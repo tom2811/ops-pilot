@@ -238,8 +238,22 @@ export async function processInboundEmail(
 
   // 5. Existing ticket -> Add comment
   if (targetTicketId) {
-    const ticket = await loadTicket(client, tenantId, targetTicketId);
+    let ticket = await loadTicket(client, tenantId, targetTicketId);
     if (ticket) {
+      let originalMergedFromNumber: number | null = null;
+      const visited = new Set<string>([ticket.id]);
+      while (ticket.merged_into_ticket_id) {
+        originalMergedFromNumber = ticket.number;
+        const parent = await loadTicket(client, tenantId, ticket.merged_into_ticket_id);
+        if (!parent || visited.has(parent.id)) break;
+        visited.add(parent.id);
+        ticket = parent;
+      }
+
+      const commentPrefix = originalMergedFromNumber
+        ? `[From reply to merged ticket #${originalMergedFromNumber}]:\n\n`
+        : "";
+
       const comment = await addComment(
         client,
         tenantId,
@@ -247,7 +261,7 @@ export async function processInboundEmail(
         userRole,
         ticket.id,
         {
-          body: cleanBody || "(No content)",
+          body: `${commentPrefix}${cleanBody || "(No content)"}`,
           visibility: "public",
         },
         correlationId,

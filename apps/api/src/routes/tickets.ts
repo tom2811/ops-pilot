@@ -3,7 +3,9 @@ import { z } from "zod";
 import {
   assignSchema,
   commentSchema,
+  createTicketLinkSchema,
   createTicketSchema,
+  mergeTicketSchema,
   routePreviewSchema,
   ticketUpdateSchema,
   transitionSchema,
@@ -17,8 +19,12 @@ import {
   applyTransition,
   assignTicket,
   createTicket,
+  createTicketLink,
   deleteTicket,
+  deleteTicketLink,
+  getTicketLinks,
   listTickets,
+  mergeTickets,
   ticketDetail,
   updateTicket,
 } from "../domain/tickets.js";
@@ -264,6 +270,60 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
         role,
         params.ticketId,
         { body: input.body, visibility: input.visibility },
+        req.correlationId,
+      ),
+    );
+  });
+
+  app.get("/t/:tenantSlug/tickets/:ticketId/links", async (req) => {
+    const { userId, tenantId, role } = context(req);
+    const params = ticketParams.parse(req.params);
+    return withTenant(tenantId, userId, async (client) => {
+      const items = await getTicketLinks(client, tenantId, params.ticketId, userId, role);
+      return { items };
+    });
+  });
+
+  app.post("/t/:tenantSlug/tickets/:ticketId/links", async (req) => {
+    const { userId, tenantId, role } = context(req);
+    const params = ticketParams.parse(req.params);
+    const input = createTicketLinkSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) =>
+      createTicketLink(
+        client,
+        tenantId,
+        userId,
+        role,
+        params.ticketId,
+        { targetTicketNumber: input.targetTicketNumber, linkType: input.linkType },
+        req.correlationId,
+      ),
+    );
+  });
+
+  app.delete("/t/:tenantSlug/tickets/:ticketId/links/:linkId", async (req, reply) => {
+    const { userId, tenantId, role } = context(req);
+    const params = z
+      .object({ tenantSlug: z.string().min(1), ticketId: z.string().uuid(), linkId: z.string().uuid() })
+      .parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      await deleteTicketLink(client, tenantId, userId, role, params.ticketId, params.linkId, req.correlationId);
+    });
+    return reply.status(204).send();
+  });
+
+  app.post("/t/:tenantSlug/tickets/:ticketId/merge", async (req) => {
+    const { userId, tenantId, role } = context(req);
+    const params = ticketParams.parse(req.params);
+    const input = mergeTicketSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) =>
+      mergeTickets(
+        client,
+        tenantId,
+        userId,
+        role,
+        params.ticketId,
+        input,
         req.correlationId,
       ),
     );

@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { addBusinessMinutes, renderTemplate, type BusinessHoursConfig, type Role, type Stage } from "@opspilot/core";
+import {
+  addBusinessMinutes,
+  INVERSE_LINK_TYPES,
+  renderTemplate,
+  type BusinessHoursConfig,
+  type Role,
+  type Stage,
+  type TicketLinkType,
+} from "@opspilot/core";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
 import { requestFeedback } from "./feedback.js";
@@ -37,6 +45,7 @@ export type TicketRow = {
   sla_response_breached_at: Date | null;
   sla_resolution_breached_at: Date | null;
   sla_paused_at: Date | null;
+  merged_into_ticket_id: string | null;
   created_at: Date;
   updated_at: Date;
   status_key: string;
@@ -60,6 +69,7 @@ const ticketSelect = `
          t.first_responded_at, t.resolved_at, t.closed_at,
          t.sla_policy_id, t.sla_response_due_at, t.sla_resolution_due_at,
          t.sla_response_breached_at, t.sla_resolution_breached_at, t.sla_paused_at,
+         t.merged_into_ticket_id,
          t.created_at, t.updated_at,
          s.key as status_key, s.label as status_label, s.stage as status_stage,
          c.name as category_name,
@@ -150,7 +160,13 @@ export async function assertCanRead(
 ): Promise<void> {
   if (role === "tenant_admin") return;
   if (role === "employee") {
-    if (ticket.requester_id !== userId) notFound();
+    if (ticket.requester_id === userId) return;
+    const mergedParticipant = await client.query(
+      "select 1 from tickets where tenant_id = $1 and merged_into_ticket_id = $2 and requester_id = $3",
+      [ticket.tenant_id, ticket.id, userId],
+    );
+    if ((mergedParticipant.rowCount ?? 0) > 0) return;
+    notFound();
     return;
   }
   if (ticket.assignee_id === userId) return;
@@ -1103,6 +1119,18 @@ export async function ticketDetail(
     [tenantId, ticketId],
   );
 
+  const links = role === "employee" ? [] : await getTicketLinks(client, tenantId, ticketId);
+  let mergedIntoTicket: { id: string; number: number; subject: string } | null = null;
+  if (ticket.merged_into_ticket_id) {
+    const parent = await client.query<{ id: string; number: number; subject: string }>(
+      "select id, number, subject from tickets where tenant_id = $1 and id = $2 and deleted_at is null",
+      [tenantId, ticket.merged_into_ticket_id],
+    );
+    if (parent.rows[0]) {
+      mergedIntoTicket = parent.rows[0];
+    }
+  }
+
   return {
     ...ticket,
     custom_fields: customFields,
@@ -1112,5 +1140,426 @@ export async function ticketDetail(
     updates: updates.rows,
     attachments: attachments.rows,
     allowed_transitions: transitions,
+    links,
+    merged_into: mergedIntoTicket,
+  };
+}
+
+export type TicketLinkRow = {
+  id: string;
+  link_type: TicketLinkType;
+  linked_ticket_id: string;
+  linked_ticket_number: number;
+  linked_ticket_subject: string;
+  linked_ticket_status: string;
+  linked_ticket_stage: Stage;
+  created_at: Date;
+};
+
+export async function getTicketLinks(
+  client: pg.PoolClient,
+  tenantId: string,
+  ticketId: string,
+  userId?: string,
+  role?: Role,
+): Promise<TicketLinkRow[]> {
+  if (role === "employee") return [];
+  if (userId && role) {
+    const ticket = await loadTicket(client, tenantId, ticketId);
+    if (!ticket) notFound();
+    await assertCanRead(client, ticket, userId, role);
+  }
+
+  const result = await client.query<{
+    id: string;
+    raw_type: TicketLinkType;
+    is_source: boolean;
+    linked_ticket_id: string;
+    linked_ticket_number: number;
+    linked_ticket_subject: string;
+    linked_ticket_status: string;
+    linked_ticket_stage: Stage;
+    created_at: Date;
+  }>(
+    `select tl.id,
+            tl.link_type as raw_type,
+            true as is_source,
+            t.id as linked_ticket_id,
+            t.number as linked_ticket_number,
+            t.subject as linked_ticket_subject,
+            s.label as linked_ticket_status,
+            s.stage as linked_ticket_stage,
+            tl.created_at
+     from ticket_links tl
+     join tickets t on t.tenant_id = tl.tenant_id and t.id = tl.target_ticket_id
+     join ticket_statuses s on s.tenant_id = t.tenant_id and s.id = t.status_id
+     where tl.tenant_id = $1 and tl.source_ticket_id = $2 and t.deleted_at is null
+
+     union all
+
+     select tl.id,
+            tl.link_type as raw_type,
+            false as is_source,
+            t.id as linked_ticket_id,
+            t.number as linked_ticket_number,
+            t.subject as linked_ticket_subject,
+            s.label as linked_ticket_status,
+            s.stage as linked_ticket_stage,
+            tl.created_at
+     from ticket_links tl
+     join tickets t on t.tenant_id = tl.tenant_id and t.id = tl.source_ticket_id
+     join ticket_statuses s on s.tenant_id = t.tenant_id and s.id = t.status_id
+     where tl.tenant_id = $1 and tl.target_ticket_id = $2 and t.deleted_at is null
+
+     order by created_at desc`,
+    [tenantId, ticketId],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    link_type: (row.is_source ? row.raw_type : INVERSE_LINK_TYPES[row.raw_type] ?? row.raw_type) as TicketLinkType,
+    linked_ticket_id: row.linked_ticket_id,
+    linked_ticket_number: row.linked_ticket_number,
+    linked_ticket_subject: row.linked_ticket_subject,
+    linked_ticket_status: row.linked_ticket_status,
+    linked_ticket_stage: row.linked_ticket_stage,
+    created_at: row.created_at,
+  }));
+}
+
+export async function createTicketLink(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  role: Role,
+  ticketId: string,
+  input: { targetTicketNumber: number; linkType: TicketLinkType },
+  correlationId: string,
+): Promise<TicketLinkRow> {
+  if (role === "employee") {
+    badRequest("Employees cannot link tickets");
+  }
+
+  const source = await loadTicket(client, tenantId, ticketId);
+  if (!source) notFound();
+
+  const targetRes = await client.query<{
+    id: string;
+    number: number;
+    subject: string;
+    status_label: string;
+    status_stage: Stage;
+  }>(
+    `select t.id, t.number, t.subject, s.label as status_label, s.stage as status_stage
+     from tickets t
+     join ticket_statuses s on s.tenant_id = t.tenant_id and s.id = t.status_id
+     where t.tenant_id = $1 and t.number = $2 and t.deleted_at is null`,
+    [tenantId, input.targetTicketNumber],
+  );
+  const target = targetRes.rows[0];
+  if (!target) {
+    badRequest(`Ticket #${input.targetTicketNumber} not found`);
+  }
+
+  if (source.id === target.id) {
+    badRequest("Cannot link a ticket to itself");
+  }
+
+  const existing = await client.query(
+    `select id from ticket_links
+     where tenant_id = $1 and (
+       (source_ticket_id = $2 and target_ticket_id = $3 and link_type = $4) or
+       (source_ticket_id = $3 and target_ticket_id = $2 and link_type = $5)
+     )`,
+    [tenantId, source.id, target.id, input.linkType, INVERSE_LINK_TYPES[input.linkType]],
+  );
+  if (existing.rowCount && existing.rowCount > 0) {
+    conflict("This link already exists");
+  }
+
+  const inserted = await client.query<{ id: string; created_at: Date }>(
+    `insert into ticket_links (tenant_id, source_ticket_id, target_ticket_id, link_type, created_by)
+     values ($1, $2, $3, $4, $5)
+     returning id, created_at`,
+    [tenantId, source.id, target.id, input.linkType, userId],
+  );
+
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.link_created",
+    "ticket",
+    source.id,
+    null,
+    {
+      linkId: inserted.rows[0]?.id,
+      linkType: input.linkType,
+      targetTicketId: target.id,
+      targetTicketNumber: target.number,
+    },
+    correlationId,
+  );
+
+  return {
+    id: inserted.rows[0]!.id,
+    link_type: input.linkType,
+    linked_ticket_id: target.id,
+    linked_ticket_number: target.number,
+    linked_ticket_subject: target.subject,
+    linked_ticket_status: target.status_label,
+    linked_ticket_stage: target.status_stage,
+    created_at: inserted.rows[0]!.created_at,
+  };
+}
+
+export async function deleteTicketLink(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  role: Role,
+  ticketId: string,
+  linkId: string,
+  correlationId: string,
+): Promise<void> {
+  if (role === "employee") {
+    badRequest("Employees cannot remove ticket links");
+  }
+
+  const link = await client.query<{ id: string; source_ticket_id: string; target_ticket_id: string; link_type: string }>(
+    `select id, source_ticket_id, target_ticket_id, link_type
+     from ticket_links
+     where tenant_id = $1 and id = $2 and (source_ticket_id = $3 or target_ticket_id = $3)`,
+    [tenantId, linkId, ticketId],
+  );
+  if (!link.rows[0]) {
+    notFound();
+  }
+
+  await client.query("delete from ticket_links where tenant_id = $1 and id = $2", [tenantId, linkId]);
+
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.link_deleted",
+    "ticket",
+    ticketId,
+    null,
+    { linkId },
+    correlationId,
+  );
+}
+
+export async function mergeTickets(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  role: Role,
+  currentTicketId: string,
+  input: { targetTicketNumber: number; direction: "merge_into_this" | "merge_this_into"; reason?: string },
+  correlationId: string,
+): Promise<{
+  primaryTicketId: string;
+  secondaryTicketId: string;
+  primaryNumber: number;
+  secondaryNumber: number;
+  redirectedFromPrimaryNumber?: number | null;
+}> {
+  if (role === "employee") {
+    badRequest("Employees cannot merge tickets");
+  }
+
+  const current = await loadTicket(client, tenantId, currentTicketId);
+  if (!current) notFound();
+
+  const other = await client.query<{
+    id: string;
+    number: number;
+    subject: string;
+    description: string;
+    requester_name: string;
+    merged_into_ticket_id: string | null;
+  }>(
+    `select t.id, t.number, t.subject, t.description, req.display_name as requester_name, t.merged_into_ticket_id
+     from tickets t
+     join users req on req.id = t.requester_id
+     where t.tenant_id = $1 and t.number = $2 and t.deleted_at is null`,
+    [tenantId, input.targetTicketNumber],
+  );
+  const otherTicket = other.rows[0];
+  if (!otherTicket) {
+    badRequest(`Ticket #${input.targetTicketNumber} not found`);
+  }
+
+  if (current.id === otherTicket.id) {
+    badRequest("Cannot merge a ticket into itself");
+  }
+
+  let primary: { id: string; number: number; subject: string; merged_into_ticket_id: string | null };
+  let secondary: {
+    id: string;
+    number: number;
+    subject: string;
+    description: string;
+    requester_name: string;
+    merged_into_ticket_id: string | null;
+  };
+
+  if (input.direction === "merge_into_this") {
+    primary = current;
+    secondary = otherTicket;
+  } else {
+    primary = otherTicket;
+    secondary = current;
+  }
+
+  // Follow primary chain to root ticket if target was previously merged
+  let redirectedFromPrimaryNumber: number | null = null;
+  const visited = new Set<string>([primary.id]);
+  while (primary.merged_into_ticket_id) {
+    if (!redirectedFromPrimaryNumber) {
+      redirectedFromPrimaryNumber = primary.number;
+    }
+    const nextRoot = await loadTicket(client, tenantId, primary.merged_into_ticket_id);
+    if (!nextRoot || visited.has(nextRoot.id)) break;
+    visited.add(nextRoot.id);
+    primary = nextRoot;
+  }
+
+  if (primary.id === secondary.id) {
+    if (redirectedFromPrimaryNumber) {
+      badRequest(
+        `Cannot merge ticket #${secondary.number} into #${redirectedFromPrimaryNumber} because #${redirectedFromPrimaryNumber} is already merged into #${secondary.number}`,
+      );
+    }
+    badRequest("Cannot merge a ticket into itself");
+  }
+
+  if (secondary.merged_into_ticket_id) {
+    badRequest(`Ticket #${secondary.number} has already been merged`);
+  }
+
+  const closedStatusRes = await client.query<{ id: string; label: string }>(
+    `select id, label from ticket_statuses
+     where tenant_id = $1 and stage = 'closed' and is_active
+     order by sort_order asc
+     limit 1`,
+    [tenantId],
+  );
+  const closedStatus = closedStatusRes.rows[0];
+  if (!closedStatus) {
+    throw new Error("Tenant has no closed status");
+  }
+
+  const actor = await client.query<{ display_name: string }>(
+    "select display_name from users where id = $1",
+    [userId],
+  );
+  const actorName = actor.rows[0]?.display_name ?? "Agent";
+
+  await client.query(
+    `update tickets
+     set status_id = $1,
+         merged_into_ticket_id = $2,
+         closed_at = coalesce(closed_at, now()),
+         updated_at = now(),
+         version = version + 1
+     where tenant_id = $3 and id = $4`,
+    [closedStatus.id, primary.id, tenantId, secondary.id],
+  );
+
+  await client.query(
+    `insert into ticket_status_history
+      (tenant_id, ticket_id, from_status_id, to_status_id, actor_id, actor_role, reason)
+     values
+      ($1, $2, (select status_id from tickets where tenant_id = $1 and id = $2), $3, $4, $5, $6)`,
+    [tenantId, secondary.id, closedStatus.id, userId, role, `Merged into #${primary.number}`],
+  );
+
+  await client.query(
+    `insert into ticket_links (tenant_id, source_ticket_id, target_ticket_id, link_type, created_by)
+     values ($1, $2, $3, 'merged_into', $4)
+     on conflict (tenant_id, source_ticket_id, target_ticket_id, link_type) do nothing`,
+    [tenantId, secondary.id, primary.id, userId],
+  );
+
+  const secCommentBody = `This ticket was merged into #${primary.number} ("${primary.subject}") by ${actorName}.${input.reason ? `\n\nReason: ${input.reason}` : ""}`;
+  await addComment(
+    client,
+    tenantId,
+    userId,
+    role,
+    secondary.id,
+    { body: secCommentBody, visibility: "public" },
+    correlationId,
+  );
+
+  const autoRedirectNote = redirectedFromPrimaryNumber
+    ? `\nNote: Target ticket #${redirectedFromPrimaryNumber} was previously merged into this ticket.`
+    : "";
+  const primCommentBody = `Merged ticket #${secondary.number} ("${secondary.subject}") into this ticket by ${actorName}.${autoRedirectNote}${input.reason ? `\nReason: ${input.reason}` : ""}\n\nOriginal Requester: ${secondary.requester_name}\nOriginal Description:\n${secondary.description}`;
+  await addComment(
+    client,
+    tenantId,
+    userId,
+    role,
+    primary.id,
+    { body: primCommentBody, visibility: "internal" },
+    correlationId,
+  );
+
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.merged",
+    "ticket",
+    secondary.id,
+    null,
+    {
+      mergedIntoTicketId: primary.id,
+      mergedIntoTicketNumber: primary.number,
+      redirectedFromPrimaryNumber,
+      reason: input.reason,
+    },
+    correlationId,
+  );
+
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.merged",
+    "ticket",
+    primary.id,
+    null,
+    {
+      secondaryTicketId: secondary.id,
+      secondaryTicketNumber: secondary.number,
+      redirectedFromPrimaryNumber,
+      reason: input.reason,
+    },
+    correlationId,
+  );
+
+  await enqueueEvent(client, tenantId, "ticket", secondary.id, 0, "ticket.merged", {
+    ticketId: secondary.id,
+    mergedIntoTicketId: primary.id,
+    mergedIntoTicketNumber: primary.number,
+  });
+
+  await enqueueEvent(client, tenantId, "ticket", primary.id, 0, "ticket.merged", {
+    ticketId: primary.id,
+    secondaryTicketId: secondary.id,
+    secondaryTicketNumber: secondary.number,
+  });
+
+  return {
+    primaryTicketId: primary.id,
+    secondaryTicketId: secondary.id,
+    primaryNumber: primary.number,
+    secondaryNumber: secondary.number,
+    redirectedFromPrimaryNumber,
   };
 }

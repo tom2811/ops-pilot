@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   addBusinessMinutes,
   cleanEmailBody,
+  createTicketLinkSchema,
   formatTicketNumber,
+  INVERSE_LINK_TYPES,
   matchesRoutingConditions,
+  mergeTicketSchema,
   parseEmailAddress,
   parseTicketNumberFromSubject,
   renderTemplate,
@@ -175,3 +178,63 @@ describe("addBusinessMinutes", () => {
     expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
   });
 });
+
+describe("ticket links and merging", () => {
+  it("computes correct inverse link types", () => {
+    expect(INVERSE_LINK_TYPES.relates_to).toBe("relates_to");
+    expect(INVERSE_LINK_TYPES.blocks).toBe("blocked_by");
+    expect(INVERSE_LINK_TYPES.blocked_by).toBe("blocks");
+    expect(INVERSE_LINK_TYPES.duplicates).toBe("duplicated_by");
+    expect(INVERSE_LINK_TYPES.duplicated_by).toBe("duplicates");
+    expect(INVERSE_LINK_TYPES.causes).toBe("caused_by");
+    expect(INVERSE_LINK_TYPES.caused_by).toBe("causes");
+    expect(INVERSE_LINK_TYPES.merged_into).toBe("merged_from");
+    expect(INVERSE_LINK_TYPES.merged_from).toBe("merged_into");
+  });
+
+  it("validates createTicketLinkSchema", () => {
+    const valid = createTicketLinkSchema.safeParse({
+      targetTicketNumber: "101",
+      linkType: "relates_to",
+    });
+    expect(valid.success).toBe(true);
+    if (valid.success) {
+      expect(valid.data.targetTicketNumber).toBe(101);
+      expect(valid.data.linkType).toBe("relates_to");
+    }
+
+    const invalidType = createTicketLinkSchema.safeParse({
+      targetTicketNumber: 101,
+      linkType: "invalid_type",
+    });
+    expect(invalidType.success).toBe(false);
+
+    const invalidNumber = createTicketLinkSchema.safeParse({
+      targetTicketNumber: -5,
+      linkType: "blocks",
+    });
+    expect(invalidNumber.success).toBe(false);
+  });
+
+  it("validates mergeTicketSchema", () => {
+    const defaultDirection = mergeTicketSchema.safeParse({
+      targetTicketNumber: "102",
+    });
+    expect(defaultDirection.success).toBe(true);
+    if (defaultDirection.success) {
+      expect(defaultDirection.data.targetTicketNumber).toBe(102);
+      expect(defaultDirection.data.direction).toBe("merge_into_this");
+    }
+
+    const customDirection = mergeTicketSchema.safeParse({
+      targetTicketNumber: 105,
+      direction: "merge_this_into",
+      reason: "Duplicate submission via email",
+    });
+    expect(customDirection.success).toBe(true);
+    if (customDirection.success) {
+      expect(customDirection.data.reason).toBe("Duplicate submission via email");
+    }
+  });
+});
+
