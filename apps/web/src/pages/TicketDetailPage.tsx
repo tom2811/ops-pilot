@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber, renderTemplate } from "@opspilot/core";
-import { ApiError, api, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
+import { ApiError, api, apiUrl, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { DetailSkeleton, EmptyState, ErrorAlert, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
@@ -446,7 +446,7 @@ export function TicketDetailPage() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch(`/api/t/${tenantSlug}/tickets/${ticketId}/attachments`, {
+      const response = await fetch(apiUrl(`/t/${tenantSlug}/tickets/${ticketId}/attachments`), {
         method: "POST",
         body,
         credentials: "include",
@@ -768,7 +768,7 @@ export function TicketDetailPage() {
                 {detail.attachments.map((attachment) => (
                   <li key={attachment.id}>
                     <div>
-                      <a href={`/api/t/${tenantSlug}/attachments/${attachment.id}/download`}>
+                      <a href={apiUrl(`/t/${tenantSlug}/attachments/${attachment.id}/download`)}>
                         {attachment.filename}
                       </a>
                       <span className="muted small">

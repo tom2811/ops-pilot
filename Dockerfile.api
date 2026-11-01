@@ -16,4 +16,4 @@ COPY packages/core packages/core
 COPY packages/db packages/db
 
 EXPOSE 3000
-CMD ["corepack", "pnpm", "--filter", "@opspilot/api", "start"]
+CMD ["sh", "-c", "if [ \"$RUN_WORKER\" = \"false\" ]; then corepack pnpm --filter @opspilot/api start; else corepack pnpm --filter @opspilot/api start:all; fi"]

@@ -7,8 +7,15 @@ export class ApiError extends Error {
   }
 }
 
+const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+
+export function apiUrl(path: string): string {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${apiBase}/api${cleanPath}`;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(apiUrl(path), {
     credentials: "include",
     ...init,
     headers: {
@@ -62,7 +69,7 @@ export function formatDate(value: string | null): string {
 }
 
 export async function downloadFile(path: string, fallbackFilename: string): Promise<void> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(apiUrl(path), {
     credentials: "include",
   });
   if (!response.ok) {

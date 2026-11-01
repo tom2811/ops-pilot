@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
+    "start:all": "tsx src/start-all.ts",
     "worker": "tsx src/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
