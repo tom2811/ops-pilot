@@ -215,21 +215,31 @@ async function markSlaBreaches(kind: "response" | "resolution"): Promise<number>
     kind === "response"
       ? "(first_responded_at is null or first_responded_at > sla_response_due_at)"
       : "(resolved_at is null or resolved_at > sla_resolution_due_at)";
+  // The clock stops when the ticket is answered, resolved, merged, or closed.
+  // Using the stop time as the breach timestamp keeps historical breaches accurate
+  // instead of stamping them when the worker happens to notice them.
+  const stopExpression =
+    kind === "response"
+      ? "coalesce(first_responded_at, resolved_at, closed_at, now())"
+      : "coalesce(resolved_at, closed_at, now())";
 
   const result = await pool.query<SlaBreachRow>(
     `with due as (
        select tenant_id, id
        from tickets
-       where ${dueColumn} < now()
+       where ${dueColumn} is not null
+         and ${dueColumn} < ${stopExpression}
          and ${breachedColumn} is null
          and sla_paused_at is null
+         and deleted_at is null
+         and merged_into_ticket_id is null
          and ${metCondition}
        order by ${dueColumn}
        for update skip locked
        limit 100
      )
      update tickets t
-     set ${breachedColumn} = now(), version = version + 1, updated_at = now()
+     set ${breachedColumn} = ${stopExpression}, version = version + 1, updated_at = now()
      from due
      where t.tenant_id = due.tenant_id and t.id = due.id
      returning t.tenant_id, t.id, t.version`,
@@ -287,6 +297,8 @@ async function markSlaWarnings(kind: "response" | "resolution"): Promise<number>
          and sla_paused_at is null
          and deleted_at is null
          and merged_into_ticket_id is null
+         and resolved_at is null
+         and closed_at is null
          and ${metCondition}
        order by ${dueColumn}
        for update skip locked
