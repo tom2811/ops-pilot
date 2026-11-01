@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "opspilot",
+  "name": "ops-pilot",
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./apps/web/dist",

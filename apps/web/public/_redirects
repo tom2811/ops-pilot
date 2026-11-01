@@ -1,3 +1,0 @@
-# Cloudflare Pages Routing Rules
-# SPA client-side fallback: any non-static path serves /index.html with HTTP 200
-/*    /index.html   200
