@@ -2233,6 +2233,10 @@ tbody td:last-child {
   box-shadow: 0 0 0 1px var(--hairline-strong);
 }
 
+.timeline-dot.status {
+  background: var(--success);
+}
+
 .timeline-dot.assignment {
   background: var(--brand);
 }

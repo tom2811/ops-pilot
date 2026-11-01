@@ -951,7 +951,7 @@ export async function assignTicket(
     await client.query(
       `insert into ticket_status_history
         (tenant_id, ticket_id, from_status_id, to_status_id, actor_id, actor_role, reason)
-       values ($1, $2, $3, $4, $5, $6, 'assigned')`,
+       values ($1, $2, $3, $4, $5, $6, 'Assigned to team')`,
       [tenantId, ticketId, ticket.status_id, nextStatusId, actorId, actorRole],
     );
   }
@@ -1127,14 +1127,19 @@ export async function ticketDetail(
     actor_role: string;
     actor_name: string | null;
     action: string;
+    after: Record<string, unknown> | null;
+    before: Record<string, unknown> | null;
   }>(
-    `select a.created_at, a.actor_role, u.display_name as actor_name, a.action
+    `select a.created_at, a.actor_role, u.display_name as actor_name, a.action, a.after, a.before
      from audit_log a
      join tickets t on t.tenant_id = a.tenant_id and t.id = a.entity_id
      left join users u on u.id = a.actor_id
      where a.tenant_id = $1 and a.entity_type = 'ticket' and a.entity_id = $2
        and (
          a.action = 'ticket.updated'
+         or a.action = 'ticket.merged'
+         or a.action = 'ticket.link_created'
+         or a.action = 'ticket.link_deleted'
          or (a.action = 'ticket.sla_response_breached' and t.sla_response_breached_at is not null)
          or (a.action = 'ticket.sla_resolution_breached' and t.sla_resolution_breached_at is not null)
        )
@@ -1448,8 +1453,9 @@ export async function mergeTickets(
     description: string;
     requester_name: string;
     merged_into_ticket_id: string | null;
+    status_id: string;
   }>(
-    `select t.id, t.number, t.subject, t.description, req.display_name as requester_name, t.merged_into_ticket_id
+    `select t.id, t.number, t.subject, t.description, req.display_name as requester_name, t.merged_into_ticket_id, t.status_id
      from tickets t
      join users req on req.id = t.requester_id
      where t.tenant_id = $1 and t.number = $2 and t.deleted_at is null`,
@@ -1477,6 +1483,7 @@ export async function mergeTickets(
     description: string;
     requester_name: string;
     merged_into_ticket_id: string | null;
+    status_id: string;
   };
 
   if (input.direction === "merge_into_this") {
@@ -1546,8 +1553,8 @@ export async function mergeTickets(
     `insert into ticket_status_history
       (tenant_id, ticket_id, from_status_id, to_status_id, actor_id, actor_role, reason)
      values
-      ($1, $2, (select status_id from tickets where tenant_id = $1 and id = $2), $3, $4, $5, $6)`,
-    [tenantId, secondary.id, closedStatus.id, userId, role, `Merged into #${primary.number}`],
+      ($1, $2, $3, $4, $5, $6, $7)`,
+    [tenantId, secondary.id, secondary.status_id, closedStatus.id, userId, role, `Merged into #${primary.number}`],
   );
 
   await client.query(

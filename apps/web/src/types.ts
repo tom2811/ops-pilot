@@ -178,6 +178,8 @@ export type TicketUpdate = {
   actor_role: string;
   actor_name: string | null;
   action?: string;
+  after?: Record<string, unknown> | null;
+  before?: Record<string, unknown> | null;
 };
 
 export type Transition = {

@@ -198,7 +198,7 @@ export function TicketDetailPage() {
     ...detail.history.map((event) => ({
       time: event.created_at,
       title: event.from_label ? `${event.from_label} → ${event.to_label}` : `Opened as ${event.to_label}`,
-      detail: event.reason ?? undefined,
+      detail: event.reason === "assigned" ? "Assigned to team" : (event.reason ?? undefined),
       actor: event.actor_name ?? humanize(event.actor_role),
       kind: "status" as const,
     })),
@@ -207,21 +207,69 @@ export function TicketDetailPage() {
       title: event.to_assignee_name
         ? `Assigned to ${event.to_assignee_name}`
         : `Assigned to ${event.to_team_name ?? "a team"}`,
-      detail: event.to_team_name ? `Team: ${event.to_team_name}` : undefined,
+      detail: event.to_assignee_name && event.to_team_name ? `Team: ${event.to_team_name}` : undefined,
       actor: event.actor_name ?? humanize(event.actor_role),
       kind: "assignment" as const,
     })),
-    ...detail.updates.map((event) => ({
-      time: event.created_at,
-      title:
-        event.action === "ticket.sla_response_breached"
-          ? "Response SLA breached"
-          : event.action === "ticket.sla_resolution_breached"
-            ? "Resolution SLA breached"
-            : "Ticket details updated",
-      actor: event.actor_name ?? humanize(event.actor_role),
-      kind: "audit" as const,
-    })),
+    ...detail.updates
+      .filter((event) => {
+        if (event.action === "ticket.merged") {
+          const after = event.after as { mergedTicketNumber?: number; mergedIntoTicketNumber?: number } | undefined;
+          return Boolean(after?.mergedTicketNumber);
+        }
+        return true;
+      })
+      .map((event) => {
+        let title = "Ticket details updated";
+        let detailText: string | undefined;
+
+        if (event.action === "ticket.sla_response_breached") {
+          title = "Response SLA breached";
+        } else if (event.action === "ticket.sla_resolution_breached") {
+          title = "Resolution SLA breached";
+        } else if (event.action === "ticket.merged") {
+          const after = event.after as { mergedTicketNumber?: number } | undefined;
+          title = after?.mergedTicketNumber
+            ? `Merged ticket #${after.mergedTicketNumber} into this ticket`
+            : "Ticket merged";
+        } else if (event.action === "ticket.link_created") {
+          const after = event.after as { targetTicketNumber?: number; linkType?: TicketLinkType } | undefined;
+          title = after?.targetTicketNumber
+            ? `Linked to #${after.targetTicketNumber} (${linkTypeLabel(after.linkType ?? "relates_to")})`
+            : "Ticket link added";
+        } else if (event.action === "ticket.link_deleted") {
+          const before = event.before as { targetTicketNumber?: number } | undefined;
+          title = before?.targetTicketNumber
+            ? `Removed link to #${before.targetTicketNumber}`
+            : "Ticket link removed";
+        } else if (event.action === "ticket.updated") {
+          const after = event.after as Record<string, unknown> | undefined;
+          if (after) {
+            const changed: string[] = [];
+            if (after.subject) changed.push("subject");
+            if (after.priorityId) changed.push("priority");
+            if (after.categoryId) changed.push("category");
+            if (
+              after.customFields &&
+              typeof after.customFields === "object" &&
+              Object.keys(after.customFields).length > 0
+            ) {
+              changed.push("custom fields");
+            }
+            if (changed.length > 0) {
+              detailText = `Updated ${changed.join(", ")}`;
+            }
+          }
+        }
+
+        return {
+          time: event.created_at,
+          title,
+          detail: detailText,
+          actor: event.actor_name ?? humanize(event.actor_role),
+          kind: "audit" as const,
+        };
+      }),
   ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
   async function reload(message?: string): Promise<void> {
