@@ -37,6 +37,91 @@ function Loading({ label = "Loading…" }: { label?: string }) {
   );
 }
 
+function TenantLayoutSkeleton({
+  collapsed,
+  setCollapsed,
+}: {
+  collapsed: boolean;
+  setCollapsed: (val: boolean | ((prev: boolean) => boolean)) => void;
+}) {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`.trim()}>
+      <aside className="sidebar" id="app-sidebar" aria-label="Main navigation">
+        <div className="sb-brand">
+          <BrandMark />
+          <span className="sb-brand-text">
+            <strong>OpsPilot</strong>
+            <span>Service desk</span>
+          </span>
+        </div>
+
+        <div className="ws-switch">
+          <div className="ws-trigger" style={{ pointerEvents: "none" }}>
+            <span className="ws-mark skeleton" style={{ width: 28, height: 28, borderRadius: 4 }} />
+            <span className="ws-meta">
+              <span className="skeleton" style={{ width: 88, height: 12, marginBottom: 4 }} />
+              <span className="skeleton" style={{ width: 48, height: 9 }} />
+            </span>
+          </div>
+        </div>
+
+        <nav className="sb-nav" aria-hidden="true">
+          <div>
+            <p className="sb-label">Workspace</p>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="overview" /><span className="sb-item-label">Overview</span></div>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="ticket" /><span className="sb-item-label">Tickets</span></div>
+          </div>
+          <div>
+            <p className="sb-label">Insights</p>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="reports" /><span className="sb-item-label">Reports</span></div>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="audit" /><span className="sb-item-label">Audit log</span></div>
+          </div>
+          <div>
+            <p className="sb-label">Configure</p>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="admin" /><span className="sb-item-label">Configuration</span></div>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="people" /><span className="sb-item-label">People</span></div>
+          </div>
+        </nav>
+
+        <div className="sb-foot">
+          <div className="sb-account" style={{ pointerEvents: "none" }}>
+            <span className="avatar skeleton" style={{ width: 28, height: 28, borderRadius: "50%" }} />
+            <span className="account-meta">
+              <span className="skeleton" style={{ width: 72, height: 11, marginBottom: 4 }} />
+              <span className="skeleton" style={{ width: 44, height: 8 }} />
+            </span>
+          </div>
+        </div>
+      </aside>
+
+      <div className="workspace">
+        <header className="topbar">
+          <button
+            type="button"
+            className="icon-btn sb-collapse"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Icon name="sidebar" />
+          </button>
+          <div className="crumb">
+            <span className="skeleton" style={{ width: 70, height: 14 }} />
+            <span className="sep workspace-sep">/</span>
+            <span className="skeleton" style={{ width: 90, height: 14 }} />
+          </div>
+          <div className="topbar-right">
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          </div>
+        </header>
+        <main className="page">
+          <PageSkeleton rows={5} cols={5} label="Loading workspace" />
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function HomeRedirect() {
   const { user, memberships, loading } = useAuth();
   if (loading) return <Loading />;
@@ -201,7 +286,9 @@ function TenantLayout() {
     };
   }, [drawerOpen]);
 
-  if (loading) return <Loading />;
+  if (loading) {
+    return <TenantLayoutSkeleton collapsed={collapsed} setCollapsed={setCollapsed} />;
+  }
   if (!user) return <Navigate to="/login" replace />;
   const membership = memberships.find((item) => item.slug === tenantSlug);
   if (!membership) {

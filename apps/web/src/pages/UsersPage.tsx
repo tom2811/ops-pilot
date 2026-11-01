@@ -281,6 +281,11 @@ export function UsersPage() {
         </div>
       )}
 
+      <div className="admin-section-divider">
+        <div className="eyebrow">Onboarding</div>
+        <h3>Invitations & Access</h3>
+      </div>
+
       <div className="people-top">
         <section className="card">
           <div className="section-heading"><h2>Invite someone</h2></div>
@@ -330,8 +335,11 @@ export function UsersPage() {
           </form>
         </section>
 
-        <section className="list-panel">
-          <div className="panel-head"><h2>Pending invitations</h2></div>
+        <section className="list-panel card">
+          <div className="panel-head">
+            <h2>Pending invitations</h2>
+            <span className="badge subtle">{invitations.length}</span>
+          </div>
           {invitations.length === 0 ? (
             <EmptyState title="No pending invitations">New invitations will appear here.</EmptyState>
           ) : (
@@ -358,12 +366,116 @@ export function UsersPage() {
         </section>
       </div>
 
-      <section className="list-panel">
+      <div className="admin-section-divider">
+        <div className="eyebrow">Workspace roster</div>
+        <h3>Members</h3>
+      </div>
+
+      <section className="list-panel card">
+        <div className="panel-head">
+          <h2>Members</h2>
+          <span className="badge subtle">{users.length}</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Person</th><th>Role</th><th>Teams</th><th>Active</th><th /></tr>
+            </thead>
+            <tbody>
+              {users.map((user) => {
+                const draft = drafts[user.id] ?? {
+                  role: user.role,
+                  isActive: user.is_active,
+                  teamIds: user.team_ids,
+                  customRoleId: user.custom_role_id,
+                };
+                const roleValue = draft.customRoleId ? `custom:${draft.customRoleId}` : `builtin:${draft.role}`;
+                return (
+                  <tr key={user.id}>
+                    <td>
+                      <strong>{user.name}</strong>
+                      <div className="muted small">{user.email}</div>
+                    </td>
+                    <td>
+                      <Select
+                        ariaLabel={`Role for ${user.name}`}
+                        value={roleValue}
+                        onChange={(value) => {
+                          if (value.startsWith("custom:")) {
+                            const role = roles.find((item) => item.id === value.slice(7));
+                            if (role) {
+                              updateDraft(user.id, { customRoleId: role.id, role: role.base_role });
+                            }
+                          } else {
+                            updateDraft(user.id, {
+                              customRoleId: null,
+                              role: value.slice(8) as Role,
+                            });
+                          }
+                        }}
+                        options={[
+                          ...ROLES.map((item) => ({
+                            value: `builtin:${item}`,
+                            label: humanize(item),
+                            group: "Built-in roles",
+                          })),
+                          ...roles.map((item) => ({
+                            value: `custom:${item.id}`,
+                            label: `${item.name} (${humanize(item.base_role)})`,
+                            group: "Custom roles",
+                          })),
+                        ]}
+                      />
+                    </td>
+                    <td>
+                      <div className="team-checks">
+                        {teams.map((team) => (
+                          <label key={team.id} className="check-row">
+                            <input
+                              type="checkbox"
+                              checked={draft.teamIds.includes(team.id)}
+                              onChange={() => toggleTeam(user.id, team.id)}
+                            />
+                            {team.name}
+                          </label>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={draft.isActive}
+                        onChange={(event) => updateDraft(user.id, { isActive: event.target.checked })}
+                        aria-label={`Active: ${user.name}`}
+                      />
+                    </td>
+                    <td>
+                      <button className="button secondary small" disabled={busy} onClick={() => void saveUser(user)}>
+                        Save
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="admin-section-divider">
+        <div className="eyebrow">Permissions</div>
+        <h3>Custom Roles</h3>
+      </div>
+
+      <section className="list-panel card">
         <div className="panel-head">
           <h2>Custom roles</h2>
-          <button type="button" className="button secondary small" onClick={startRoleCreate}>
-            New role
-          </button>
+          <div className="panel-actions">
+            <span className="badge subtle">{roles.length}</span>
+            <button type="button" className="button secondary small" onClick={startRoleCreate}>
+              New role
+            </button>
+          </div>
         </div>
         {roles.length === 0 ? (
           <EmptyState title="No custom roles">Create one to grant a focused permission set.</EmptyState>
@@ -459,94 +571,6 @@ export function UsersPage() {
           </fieldset>
         </form>
       </Sheet>
-
-      <section className="list-panel">
-        <div className="panel-head"><h2>Members</h2></div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Person</th><th>Role</th><th>Teams</th><th>Active</th><th /></tr>
-            </thead>
-            <tbody>
-              {users.map((user) => {
-                const draft = drafts[user.id] ?? {
-                  role: user.role,
-                  isActive: user.is_active,
-                  teamIds: user.team_ids,
-                  customRoleId: user.custom_role_id,
-                };
-                const roleValue = draft.customRoleId ? `custom:${draft.customRoleId}` : `builtin:${draft.role}`;
-                return (
-                  <tr key={user.id}>
-                    <td>
-                      <strong>{user.name}</strong>
-                      <div className="muted small">{user.email}</div>
-                    </td>
-                    <td>
-                      <Select
-                        ariaLabel={`Role for ${user.name}`}
-                        value={roleValue}
-                        onChange={(value) => {
-                          if (value.startsWith("custom:")) {
-                            const role = roles.find((item) => item.id === value.slice(7));
-                            if (role) {
-                              updateDraft(user.id, { customRoleId: role.id, role: role.base_role });
-                            }
-                          } else {
-                            updateDraft(user.id, {
-                              customRoleId: null,
-                              role: value.slice(8) as Role,
-                            });
-                          }
-                        }}
-                        options={[
-                          ...ROLES.map((item) => ({
-                            value: `builtin:${item}`,
-                            label: humanize(item),
-                            group: "Built-in roles",
-                          })),
-                          ...roles.map((item) => ({
-                            value: `custom:${item.id}`,
-                            label: `${item.name} (${humanize(item.base_role)})`,
-                            group: "Custom roles",
-                          })),
-                        ]}
-                      />
-                    </td>
-                    <td>
-                      <div className="team-checks">
-                        {teams.map((team) => (
-                          <label key={team.id} className="check-row">
-                            <input
-                              type="checkbox"
-                              checked={draft.teamIds.includes(team.id)}
-                              onChange={() => toggleTeam(user.id, team.id)}
-                            />
-                            {team.name}
-                          </label>
-                        ))}
-                      </div>
-                    </td>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={draft.isActive}
-                        onChange={(event) => updateDraft(user.id, { isActive: event.target.checked })}
-                        aria-label={`Active: ${user.name}`}
-                      />
-                    </td>
-                    <td>
-                      <button className="button secondary small" disabled={busy} onClick={() => void saveUser(user)}>
-                        Save
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
   );
 }

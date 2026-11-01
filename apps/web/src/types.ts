@@ -177,6 +177,7 @@ export type TicketUpdate = {
   created_at: string;
   actor_role: string;
   actor_name: string | null;
+  action?: string;
 };
 
 export type Transition = {
@@ -327,6 +328,7 @@ export type ReportSummary = {
   open: number;
   unassigned: number;
   sla_breached: number;
+  sla_compliance_percent?: number;
   resolved_week: number;
   created_period: number;
   avg_resolution_hours: number;
@@ -350,6 +352,7 @@ export type Report = {
   by_status: (ReportBucket & { stage: string })[];
   by_priority: (ReportBucket & { color: string })[];
   by_team: ReportBucket[];
+  by_category?: ReportBucket[];
   trend: ReportTrendPoint[];
   csat: { average: number; responses: number; comments: number };
   recent_feedback: ReportFeedback[];

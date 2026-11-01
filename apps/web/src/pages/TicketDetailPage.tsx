@@ -40,9 +40,13 @@ function slaState(
   paused: string | null,
   warningAt?: string | null,
   createdAt?: string | null,
+  stoppedAt?: string | null,
 ): "breached" | "met" | "paused" | "warning" | "overdue" | "active" | null {
   if (!due) return null;
   if (breached) return "breached";
+  if (stoppedAt) {
+    return new Date(stoppedAt).getTime() > new Date(due).getTime() ? "breached" : "met";
+  }
   if (met) return "met";
   if (paused) return "paused";
   const now = Date.now();
@@ -57,6 +61,16 @@ function slaState(
     }
   }
   return "active";
+}
+
+function slaLabel(state: string, closed: boolean): string {
+  if (state === "warning") return "At risk";
+  if (state === "breached") return closed ? "Breached (historical)" : "Breached";
+  if (state === "overdue") return "Overdue";
+  if (state === "paused") return "Paused";
+  if (state === "met") return "Met";
+  if (state === "active") return "Active";
+  return state;
 }
 
 type TimelineEvent = {
@@ -160,6 +174,7 @@ export function TicketDetailPage() {
   const needsSummary = Boolean(transition && (transition.requiresSummary || transition.stage === "resolved"));
   const needsReason = Boolean(transition && (transition.requiresReason || transition.stage === "pending" || reopening));
   const teamAgents = config?.agents.filter((agent) => agent.team_ids.includes(teamId)) ?? [];
+  const isClosed = detail.status_stage === "closed" || Boolean(detail.merged_into);
   const responseSla = slaState(
     detail.sla_response_due_at,
     detail.sla_response_breached_at,
@@ -167,6 +182,7 @@ export function TicketDetailPage() {
     detail.sla_paused_at,
     detail.sla_response_warning_at,
     detail.created_at,
+    isClosed ? (detail.first_responded_at ?? detail.resolved_at ?? detail.closed_at) : null,
   );
   const resolutionSla = slaState(
     detail.sla_resolution_due_at,
@@ -175,6 +191,7 @@ export function TicketDetailPage() {
     detail.sla_paused_at,
     detail.sla_resolution_warning_at,
     detail.created_at,
+    isClosed ? (detail.resolved_at ?? detail.closed_at) : null,
   );
 
   const timeline: TimelineEvent[] = [
@@ -196,7 +213,12 @@ export function TicketDetailPage() {
     })),
     ...detail.updates.map((event) => ({
       time: event.created_at,
-      title: "Ticket details updated",
+      title:
+        event.action === "ticket.sla_response_breached"
+          ? "Response SLA breached"
+          : event.action === "ticket.sla_resolution_breached"
+            ? "Resolution SLA breached"
+            : "Ticket details updated",
       actor: event.actor_name ?? humanize(event.actor_role),
       kind: "audit" as const,
     })),
@@ -529,9 +551,27 @@ export function TicketDetailPage() {
         <Link className="back-link" to={`/t/${tenantSlug}/tickets`}>
           ← Tickets
         </Link>
-        <div className="detail-title">
-          <span className="mono muted">{formatTicketNumber(prefix, detail.number)}</span>
-          <h1>{detail.subject}</h1>
+        <div className="detail-header-row">
+          <div className="detail-title">
+            <span className="mono muted">{formatTicketNumber(prefix, detail.number)}</span>
+            <h1>{detail.subject}</h1>
+            <div className="badge-row">
+              <StatusBadge label={detail.status_label} stage={detail.status_stage} />
+              <PriorityBadge label={priorityMeta?.label ?? detail.priority_label} color={priorityMeta?.color} />
+              <span className="badge subtle">{detail.category_name}</span>
+              {detail.reopened_count > 0 && <span className="badge subtle">Reopened {detail.reopened_count}×</span>}
+              {resolutionSla === "breached" && (
+                <SlaBadge
+                  label={isClosed ? "SLA breached before closure" : "SLA breached"}
+                  state={isClosed ? "historical" : "breached"}
+                />
+              )}
+              {!isClosed && resolutionSla === "warning" && <SlaBadge label="SLA at risk" state="warning" />}
+              {!isClosed && resolutionSla === "paused" && <SlaBadge label="SLA paused" state="paused" />}
+              {isClosed && resolutionSla === "met" && <SlaBadge label="SLA met" state="met" />}
+              {detail.pending_chaser_sent_at && <span className="badge subtle">Pending reminder sent</span>}
+            </div>
+          </div>
           {canEdit && (
             <div className="page-actions detail-actions">
               <button className="button secondary" onClick={startEditing}>
@@ -549,29 +589,19 @@ export function TicketDetailPage() {
               )}
             </div>
           )}
-          <div className="badge-row">
-            <StatusBadge label={detail.status_label} stage={detail.status_stage} />
-            <PriorityBadge label={priorityMeta?.label ?? detail.priority_label} color={priorityMeta?.color} />
-            <span className="badge subtle">{detail.category_name}</span>
-            {detail.reopened_count > 0 && <span className="badge subtle">Reopened {detail.reopened_count}×</span>}
-            {resolutionSla === "breached" && <SlaBadge label="SLA breached" state="breached" />}
-            {resolutionSla === "warning" && <SlaBadge label="SLA at risk" state="warning" />}
-            {resolutionSla === "paused" && <SlaBadge label="SLA paused" state="paused" />}
-            {detail.pending_chaser_sent_at && <span className="badge subtle">Pending reminder sent</span>}
-          </div>
-          {detail.merged_into && (
-            <div className="callout warning" style={{ marginTop: "0.75rem" }}>
-              <strong>Ticket merged</strong>
-              <p>
-                This ticket was merged into{" "}
-                <Link to={`/t/${tenantSlug}/tickets/${detail.merged_into.id}`}>
-                  {formatTicketNumber(prefix, detail.merged_into.number)}: {detail.merged_into.subject}
-                </Link>
-                . It is closed and incoming replies are redirected.
-              </p>
-            </div>
-          )}
         </div>
+        {detail.merged_into && (
+          <div className="callout warning" style={{ marginTop: "0.75rem" }}>
+            <strong>Ticket merged</strong>
+            <p>
+              This ticket was merged into{" "}
+              <Link to={`/t/${tenantSlug}/tickets/${detail.merged_into.id}`}>
+                {formatTicketNumber(prefix, detail.merged_into.number)}: {detail.merged_into.subject}
+              </Link>
+              . It is closed and incoming replies are redirected.
+            </p>
+          </div>
+        )}
       </div>
 
       <ErrorAlert message={error} />
@@ -955,7 +985,12 @@ export function TicketDetailPage() {
                   <dt>Response SLA</dt>
                   <dd>
                     {formatDate(detail.sla_response_due_at)}{" "}
-                    {responseSla && <SlaBadge label={responseSla === "warning" ? "At risk" : responseSla} state={responseSla} />}
+                    {responseSla && (
+                      <SlaBadge
+                        label={slaLabel(responseSla, isClosed)}
+                        state={isClosed && responseSla === "breached" ? "historical" : responseSla}
+                      />
+                    )}
                   </dd>
                 </div>
               )}
@@ -964,7 +999,12 @@ export function TicketDetailPage() {
                   <dt>Resolution SLA</dt>
                   <dd>
                     {formatDate(detail.sla_resolution_due_at)}{" "}
-                    {resolutionSla && <SlaBadge label={resolutionSla === "warning" ? "At risk" : resolutionSla} state={resolutionSla} />}
+                    {resolutionSla && (
+                      <SlaBadge
+                        label={slaLabel(resolutionSla, isClosed)}
+                        state={isClosed && resolutionSla === "breached" ? "historical" : resolutionSla}
+                      />
+                    )}
                   </dd>
                 </div>
               )}

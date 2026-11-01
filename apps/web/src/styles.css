@@ -1415,23 +1415,29 @@ input[type="checkbox"]:disabled {
 }
 
 .badge[class*="status-"] {
-  gap: 6px;
-  padding: 0 1px;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-chip);
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
 }
 
 .badge[class*="status-"]::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: 4.5px;
+  height: 4.5px;
   flex: none;
   border-radius: 50%;
   background: currentColor;
 }
 
 .badge .dot {
-  width: 5px;
-  height: 5px;
+  width: 4.5px;
+  height: 4.5px;
   border-radius: 50%;
   background: currentColor;
   flex: none;
@@ -1444,9 +1450,10 @@ input[type="checkbox"]:disabled {
   align-items: center;
 }
 
+/* Status badges (matching ticketing system conventions and theme palette) */
 .status-new {
-  background: var(--info-soft);
-  color: var(--info);
+  background: var(--surface-3);
+  color: var(--ink-2);
 }
 
 .status-open {
@@ -1454,14 +1461,18 @@ input[type="checkbox"]:disabled {
   color: var(--brand-ink);
 }
 
+[data-theme="dark"] .status-open {
+  color: var(--brand);
+}
+
 .status-in_progress {
-  background: var(--brand-soft);
-  color: var(--brand-ink);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .status-pending {
-  background: var(--warning-soft);
-  color: var(--warning);
+  background: var(--info-soft);
+  color: var(--info);
 }
 
 .status-resolved {
@@ -1472,6 +1483,7 @@ input[type="checkbox"]:disabled {
 .status-closed {
   background: var(--neutral-soft);
   color: var(--muted);
+  opacity: 0.8;
 }
 
 .priority-red {
@@ -1515,6 +1527,12 @@ input[type="checkbox"]:disabled {
 .sla-paused {
   background: var(--neutral-soft);
   color: var(--muted);
+}
+
+.sla-historical {
+  background: var(--neutral-soft);
+  color: var(--muted);
+  border: 1px solid var(--hairline);
 }
 
 .sla-active {
@@ -1927,7 +1945,15 @@ tbody td:last-child {
 .detail-top {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+}
+
+.detail-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .detail-title {
@@ -1935,14 +1961,23 @@ tbody td:last-child {
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+  flex: 1 1 500px;
+  min-width: 0;
 }
 
 .detail-title h1 {
   font-size: 24px;
   max-width: 70ch;
+  line-height: 1.25;
+  margin: 0;
 }
 
 .detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 4px;
   margin-left: 0;
 }
 
@@ -1962,26 +1997,38 @@ tbody td:last-child {
 }
 
 .field-list {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--hairline);
 }
 
 .field-list > div {
-  display: grid;
-  grid-template-columns: minmax(100px, 170px) minmax(0, 1fr);
-  gap: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12.5px;
+  background: var(--surface-2);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
 }
 
 .field-list dt {
   color: var(--muted);
+  font-weight: 500;
+}
+
+.field-list dt::after {
+  content: ":";
 }
 
 .field-list dd {
-  color: var(--ink-2);
+  color: var(--ink);
+  font-weight: 600;
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
@@ -2347,12 +2394,8 @@ tbody td:last-child {
 .people-top {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  align-items: stretch;
-}
-
-.people-top > * {
-  height: 100%;
+  gap: 20px;
+  align-items: start;
 }
 
 .people-top .list-panel {
@@ -2360,9 +2403,109 @@ tbody td:last-child {
   flex-direction: column;
 }
 
-.people-top .list-panel > .table-wrap,
-.people-top .list-panel > .empty-state {
-  flex: 1;
+.admin-subnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 0 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+  scrollbar-width: thin;
+}
+
+.admin-subnav a {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.admin-subnav a:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+  border-color: var(--border-color);
+}
+
+.admin-section-divider {
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+  margin-top: 8px;
+  margin-bottom: -2px;
+}
+
+.admin-section-divider .eyebrow {
+  margin-bottom: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.admin-section-divider h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.admin-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.admin-split-col {
+  min-width: 0;
+}
+
+.admin-split-form {
+  border-left: 1px solid var(--hairline);
+  padding-left: 28px;
+}
+
+.admin-split-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.admin-split-head h2 {
+  margin: 0;
+}
+
+.card[id],
+.admin-section-divider[id] {
+  scroll-margin-top: 64px;
+}
+
+@media (max-width: 960px) {
+  .admin-split {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .admin-split-form {
+    border-left: none;
+    border-top: 1px solid var(--hairline);
+    padding-left: 0;
+    padding-top: 24px;
+  }
+
+  .people-top {
+    grid-template-columns: 1fr;
+  }
 }
 
 .admin-grid {
@@ -2413,7 +2556,7 @@ tbody td:last-child {
 
 .report-breakdown-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   align-items: stretch;
 }
@@ -2437,7 +2580,7 @@ tbody td:last-child {
 }
 
 .stat-grid.report-stats {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
 .stat-grid.overview-stats-4 {

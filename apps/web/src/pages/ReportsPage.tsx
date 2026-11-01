@@ -101,6 +101,7 @@ export function ReportsPage() {
     lines.push(`"Tickets Created in Period",${report.summary.created_period}`);
     lines.push(`"Tickets Resolved (Last 7 Days)",${report.summary.resolved_week}`);
     lines.push(`"SLA Breached",${report.summary.sla_breached}`);
+    lines.push(`"SLA Compliance Rate",${(report.summary.sla_compliance_percent ?? 100).toFixed(1)}%`);
     lines.push(`"Average First Response Minutes",${report.summary.avg_response_minutes.toFixed(1)}`);
     lines.push(`"Average Resolution Hours",${report.summary.avg_resolution_hours.toFixed(1)}`);
     lines.push(`"CSAT Average Score",${report.csat.average.toFixed(2)}`);
@@ -124,6 +125,14 @@ export function ReportsPage() {
       lines.push(`"${p.label.replaceAll('"', '""')}",${p.count}`);
     }
     lines.push("");
+
+    if (report.by_category && report.by_category.length > 0) {
+      lines.push('"Tickets by Category","Count"');
+      for (const c of report.by_category) {
+        lines.push(`"${c.label.replaceAll('"', '""')}",${c.count}`);
+      }
+      lines.push("");
+    }
 
     lines.push('"Tickets by Team","Count"');
     for (const t of report.by_team) {
@@ -181,7 +190,7 @@ export function ReportsPage() {
         <div className="stack-lg" role="status" aria-busy="true">
           <span className="sr-only">Loading report</span>
           <section className="stat-grid report-stats" aria-hidden="true">
-            {Array.from({ length: 6 }, (_, index) => (
+            {Array.from({ length: 7 }, (_, index) => (
               <div key={index} className="stat-card">
                 <span className="skeleton" style={{ width: 76 }} />
                 <span className="skeleton" style={{ width: 56, height: 26 }} />
@@ -201,7 +210,7 @@ export function ReportsPage() {
             </div>
           </div>
           <div className="report-breakdown-grid" aria-hidden="true">
-            {[0, 1, 2].map((index) => (
+            {[0, 1, 2, 3].map((index) => (
               <div key={index} className="skeleton-panel">
                 <span className="skeleton" style={{ width: 80, height: 12, marginBottom: 12 }} />
                 {[80, 55, 35].map((w, i) => (
@@ -230,6 +239,13 @@ export function ReportsPage() {
               <span>Resolved</span>
               <strong>{report.summary?.resolved_week ?? 0}</strong>
               <small>last 7 days</small>
+            </div>
+            <div className="stat-card">
+              <span>SLA compliance</span>
+              <strong className={(report.summary?.sla_compliance_percent ?? 100) < 90 ? "warning" : undefined}>
+                {report.summary?.sla_compliance_percent !== undefined ? `${report.summary.sla_compliance_percent}%` : "-"}
+              </strong>
+              <small>{(report.summary?.sla_breached ?? 0) === 0 ? "0 breaches" : `${report.summary?.sla_breached} breached`}</small>
             </div>
             <div className="stat-card">
               <span>SLA breached</span>
@@ -281,6 +297,10 @@ export function ReportsPage() {
             <section className="card">
               <h2>By priority</h2>
               <BarList items={report.by_priority.map((item) => ({ label: item.label, count: item.count, color: item.color }))} />
+            </section>
+            <section className="card">
+              <h2>By category</h2>
+              <BarList items={report.by_category ?? []} />
             </section>
             <section className="card">
               <h2>By team</h2>

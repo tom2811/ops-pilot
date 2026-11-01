@@ -423,7 +423,19 @@ export function AdminPage() {
 
       <ErrorAlert message={error} />
 
-      <section className="card">
+      <nav className="admin-subnav" aria-label="Configuration navigation">
+        <a href="#settings">Settings</a>
+        <a href="#teams">Teams</a>
+        <a href="#categories">Categories</a>
+        <a href="#priorities">Priorities</a>
+        <a href="#sla-policies">SLA policies</a>
+        <a href="#routing-rules">Routing rules</a>
+        <a href="#custom-fields">Custom fields</a>
+        <a href="#canned-responses">Canned responses</a>
+        <a href="#notifications">Notifications</a>
+      </nav>
+
+      <section className="card" id="settings">
         <h2>Workspace settings</h2>
         <form className="form-grid" onSubmit={submitSettings}>
           <label>
@@ -511,9 +523,38 @@ export function AdminPage() {
         </form>
       </section>
 
-      <div className="admin-columns">
-        <div className="admin-col">
-          <section className="card">
+      <div className="admin-section-divider">
+        <div className="eyebrow">Organization</div>
+        <h3>Teams & Categories</h3>
+      </div>
+
+      <section className="card" id="teams">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Teams</h2>
+              <span className="badge subtle">{config.teams.length}</span>
+            </div>
+            {config.teams.length === 0 ? (
+              <EmptyState title="No teams" />
+            ) : (
+              <ul className="config-list">
+                {config.teams.map((team) => (
+                  <li key={team.id}>
+                    <div>
+                      <strong>{team.name}</strong>
+                      <span className="muted small">{team.slug}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editTeam(team)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
             <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
             <form className="form-grid" onSubmit={submitTeam}>
               <label>
@@ -542,9 +583,112 @@ export function AdminPage() {
                 )}
               </div>
             </form>
-          </section>
+          </div>
+        </div>
+      </section>
 
-          <section className="card">
+      <section className="card" id="categories">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Categories</h2>
+              <span className="badge subtle">{config.categories.length}</span>
+            </div>
+            {config.categories.length === 0 ? (
+              <EmptyState title="No categories" />
+            ) : (
+              <ul className="config-list">
+                {config.categories.map((category) => (
+                  <li key={category.id}>
+                    <div>
+                      <strong>{category.name}</strong>
+                      <span className="muted small">
+                        {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
+                      </span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editCategory(category)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
+            <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
+            <form className="form-grid" onSubmit={submitCategory}>
+              <label>
+                Name
+                <input
+                  value={categoryName}
+                  onChange={(event) => {
+                    setCategoryName(event.target.value);
+                    setCategorySlug(slugify(event.target.value));
+                  }}
+                  required
+                />
+              </label>
+              <label>
+                Slug
+                <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
+              </label>
+              <label className="span-2">
+                Default team
+                <Select
+                  ariaLabel="Default team"
+                  value={categoryTeam}
+                  onChange={setCategoryTeam}
+                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+                />
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingCategoryId ? "Update category" : "Create category"}
+                </button>
+                {editingCategoryId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <div className="admin-section-divider">
+        <div className="eyebrow">Service levels & routing</div>
+        <h3>Priorities, SLAs & Automation</h3>
+      </div>
+
+      <section className="card" id="priorities">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Priorities</h2>
+              <span className="badge subtle">{config.priorities.length}</span>
+            </div>
+            {config.priorities.length === 0 ? (
+              <EmptyState title="No priorities" />
+            ) : (
+              <ul className="config-list">
+                {config.priorities.map((priority) => (
+                  <li key={priority.id}>
+                    <div>
+                      <strong>{priority.label}</strong>
+                      <span className="muted small">rank {priority.rank}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editPriority(priority)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
             <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
             <form className="form-grid" onSubmit={submitPriority}>
               <label className="span-2">
@@ -600,9 +744,225 @@ export function AdminPage() {
                 )}
               </div>
             </form>
-          </section>
+          </div>
+        </div>
+      </section>
 
-          <section className="card">
+      <section className="card" id="sla-policies">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>SLA policies</h2>
+              <span className="badge subtle">{config.sla_policies.length}</span>
+            </div>
+            {config.sla_policies.length === 0 ? (
+              <EmptyState title="No SLA policies">Create one to add response and resolution targets.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.sla_policies.map((policy) => (
+                  <li key={policy.id}>
+                    <div>
+                      <strong>{policy.name}</strong>
+                      <span className="muted small">
+                        {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
+                        {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
+                        {policy.response_minutes}m / {policy.resolution_minutes}m ·{" "}
+                        {policy.business_hours_only ? "business hours" : "24x7"}
+                      </span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editSla(policy)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
+            <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
+            <form className="form-grid" onSubmit={submitSla}>
+              <label className="span-2">
+                Name
+                <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
+              </label>
+              <div className="inline-fields span-2">
+                <label>
+                  Priority
+                  <Select
+                    ariaLabel="SLA priority"
+                    value={slaPriority}
+                    onChange={setSlaPriority}
+                    options={[
+                      { value: "", label: "All priorities" },
+                      ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
+                    ]}
+                  />
+                </label>
+                <label>
+                  Category
+                  <Select
+                    ariaLabel="SLA category"
+                    value={slaCategory}
+                    onChange={setSlaCategory}
+                    options={[
+                      { value: "", label: "All categories" },
+                      ...config.categories.map((category) => ({ value: category.id, label: category.name })),
+                    ]}
+                  />
+                </label>
+              </div>
+              <div className="inline-fields span-2">
+                <label>
+                  Response minutes
+                  <input
+                    type="number"
+                    min={1}
+                    value={slaResponse}
+                    onChange={(event) => setSlaResponse(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Resolution minutes
+                  <input
+                    type="number"
+                    min={1}
+                    value={slaResolution}
+                    onChange={(event) => setSlaResolution(event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
+              <label className="check-row span-2">
+                <input
+                  type="checkbox"
+                  checked={slaBusinessHours}
+                  onChange={(event) => setSlaBusinessHours(event.target.checked)}
+                />
+                Business hours only (pause clock outside operating hours)
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
+                </button>
+                {editingSlaId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section className="card" id="routing-rules">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Routing rules</h2>
+              <span className="badge subtle">{config.routing_rules.length}</span>
+            </div>
+            {config.routing_rules.length === 0 ? (
+              <EmptyState title="No routing rules">Tickets fall back to the category default team.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.routing_rules.map((rule) => (
+                  <li key={rule.id}>
+                    <div>
+                      <strong>{rule.name}</strong>
+                      <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editRule(rule)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
+            <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
+            <p className="muted">
+              Rules run before the category default, and the newest rule wins when two rules are equally specific. This
+              builder creates a single category condition; the API accepts combined priority and custom-field conditions
+              too.
+            </p>
+            <form className="form-grid" onSubmit={submitRule}>
+              <label className="span-2">
+                Rule name
+                <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
+              </label>
+              <label>
+                When category is
+                <Select
+                  ariaLabel="When category is"
+                  value={ruleCategory}
+                  onChange={setRuleCategory}
+                  options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+                />
+              </label>
+              <label>
+                Route to
+                <Select
+                  ariaLabel="Route to"
+                  value={ruleTeam}
+                  onChange={setRuleTeam}
+                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+                />
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingRuleId ? "Update rule" : "Create rule"}
+                </button>
+                {editingRuleId && (
+                  <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <div className="admin-section-divider">
+        <div className="eyebrow">Ticket fields & snippets</div>
+        <h3>Custom Fields & Canned Responses</h3>
+      </div>
+
+      <section className="card" id="custom-fields">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Custom fields</h2>
+              <span className="badge subtle">{config.custom_fields.length}</span>
+            </div>
+            {config.custom_fields.length === 0 ? (
+              <EmptyState title="No custom fields" />
+            ) : (
+              <ul className="config-list">
+                {config.custom_fields.map((field) => (
+                  <li key={field.id}>
+                    <div>
+                      <strong>{field.label}</strong>
+                      <span className="muted small">
+                        {field.type} · {field.visibility}
+                        {field.required ? " · required" : ""}
+                      </span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editField(field)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
             <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
             <form className="form-grid" onSubmit={submitField}>
               <label>
@@ -679,169 +1039,37 @@ export function AdminPage() {
                 )}
               </div>
             </form>
-          </section>
+          </div>
         </div>
-        <div className="admin-col">
-          <section className="card">
-            <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
-            <form className="form-grid" onSubmit={submitCategory}>
-              <label>
-                Name
-                <input
-                  value={categoryName}
-                  onChange={(event) => {
-                    setCategoryName(event.target.value);
-                    setCategorySlug(slugify(event.target.value));
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Slug
-                <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
-              </label>
-              <label className="span-2">
-                Default team
-                <Select
-                  ariaLabel="Default team"
-                  value={categoryTeam}
-                  onChange={setCategoryTeam}
-                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingCategoryId ? "Update category" : "Create category"}
-                </button>
-                {editingCategoryId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          </section>
+      </section>
 
-          <section className="card">
-            <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
-            <form className="form-grid" onSubmit={submitSla}>
-              <label className="span-2">
-                Name
-                <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
-              </label>
-              <div className="inline-fields span-2">
-                <label>
-                  Priority
-                  <Select
-                    ariaLabel="SLA priority"
-                    value={slaPriority}
-                    onChange={setSlaPriority}
-                    options={[
-                      { value: "", label: "All priorities" },
-                      ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
-                    ]}
-                  />
-                </label>
-                <label>
-                  Category
-                  <Select
-                    ariaLabel="SLA category"
-                    value={slaCategory}
-                    onChange={setSlaCategory}
-                    options={[
-                      { value: "", label: "All categories" },
-                      ...config.categories.map((category) => ({ value: category.id, label: category.name })),
-                    ]}
-                  />
-                </label>
-              </div>
-              <div className="inline-fields span-2">
-                <label>
-                  Response minutes
-                  <input
-                    type="number"
-                    min={1}
-                    value={slaResponse}
-                    onChange={(event) => setSlaResponse(event.target.value)}
-                    required
-                  />
-                </label>
-                <label>
-                  Resolution minutes
-                  <input
-                    type="number"
-                    min={1}
-                    value={slaResolution}
-                    onChange={(event) => setSlaResolution(event.target.value)}
-                    required
-                  />
-                </label>
-              </div>
-              <label className="check-row span-2">
-                <input
-                  type="checkbox"
-                  checked={slaBusinessHours}
-                  onChange={(event) => setSlaBusinessHours(event.target.checked)}
-                />
-                Business hours only (pause clock outside operating hours)
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
-                </button>
-                {editingSlaId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          </section>
-
-          <section className="card">
-            <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
-            <p className="muted">
-              Rules run before the category default, and the newest rule wins when two rules are equally specific. This
-              builder creates a single category condition; the API accepts combined priority and custom-field conditions
-              too.
-            </p>
-            <form className="form-grid" onSubmit={submitRule}>
-              <label className="span-2">
-                Rule name
-                <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
-              </label>
-              <label>
-                When category is
-                <Select
-                  ariaLabel="When category is"
-                  value={ruleCategory}
-                  onChange={setRuleCategory}
-                  options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
-                />
-              </label>
-              <label>
-                Route to
-                <Select
-                  ariaLabel="Route to"
-                  value={ruleTeam}
-                  onChange={setRuleTeam}
-                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingRuleId ? "Update rule" : "Create rule"}
-                </button>
-                {editingRuleId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          </section>
-
-          <section className="card">
+      <section className="card" id="canned-responses">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Canned responses</h2>
+              <span className="badge subtle">{config.canned_responses?.length ?? 0}</span>
+            </div>
+            {(config.canned_responses?.length ?? 0) === 0 ? (
+              <EmptyState title="No canned responses">Save common replies as snippets for agents.</EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.canned_responses?.map((canned) => (
+                  <li key={canned.id}>
+                    <div>
+                      <strong>{canned.title}</strong>
+                      <span className="muted small">/{canned.shortcut} · {canned.body.slice(0, 50)}{canned.body.length > 50 ? "..." : ""}</span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editCanned(canned)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/canned-responses/${canned.id}`, canned.title)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
             <h2>{editingCannedId ? "Edit canned response" : "Add a canned response"}</h2>
             <p className="muted">
               Snippets for fast agent replies. Placeholders like <code>{"{{requester.name}}"}</code>, <code>{"{{ticket.number}}"}</code>, <code>{"{{agent.name}}"}</code> are interpolated when inserted.
@@ -898,168 +1126,16 @@ export function AdminPage() {
                 )}
               </div>
             </form>
-          </section>
+          </div>
         </div>
+      </section>
+
+      <div className="admin-section-divider">
+        <div className="eyebrow">Communications</div>
+        <h3>Email Templates</h3>
       </div>
 
-      <div className="admin-columns">
-        <div className="admin-col">
-          <section className="card">
-            <h2>Teams</h2>
-            {config.teams.length === 0 ? (
-              <EmptyState title="No teams" />
-            ) : (
-              <ul className="config-list">
-                {config.teams.map((team) => (
-                  <li key={team.id}>
-                    <div>
-                      <strong>{team.name}</strong>
-                      <span className="muted small">{team.slug}</span>
-                    </div>
-                    <ConfigActions
-                      onEdit={() => editTeam(team)}
-                      onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="card">
-            <h2>Categories</h2>
-            <ul className="config-list">
-              {config.categories.map((category) => (
-                <li key={category.id}>
-                  <div>
-                    <strong>{category.name}</strong>
-                    <span className="muted small">
-                      {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
-                    </span>
-                  </div>
-                  <ConfigActions
-                    onEdit={() => editCategory(category)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="card">
-            <h2>Priorities</h2>
-            <ul className="config-list">
-              {config.priorities.map((priority) => (
-                <li key={priority.id}>
-                  <div>
-                    <strong>{priority.label}</strong>
-                    <span className="muted small">rank {priority.rank}</span>
-                  </div>
-                  <ConfigActions
-                    onEdit={() => editPriority(priority)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
-        <div className="admin-col">
-          <section className="card">
-            <h2>SLA policies</h2>
-            {config.sla_policies.length === 0 ? (
-              <EmptyState title="No SLA policies">Create one to add response and resolution targets.</EmptyState>
-            ) : (
-              <ul className="config-list">
-                {config.sla_policies.map((policy) => (
-                  <li key={policy.id}>
-                    <div>
-                      <strong>{policy.name}</strong>
-                      <span className="muted small">
-                        {policy.priority_id ? priorityNameById.get(policy.priority_id) : "Any priority"} ·{" "}
-                        {policy.category_id ? categoryNameById.get(policy.category_id) : "Any category"} ·{" "}
-                        {policy.response_minutes}m / {policy.resolution_minutes}m ·{" "}
-                        {policy.business_hours_only ? "business hours" : "24x7"}
-                      </span>
-                    </div>
-                    <ConfigActions
-                      onEdit={() => editSla(policy)}
-                      onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="card">
-            <h2>Custom fields</h2>
-            <ul className="config-list">
-              {config.custom_fields.map((field) => (
-                <li key={field.id}>
-                  <div>
-                    <strong>{field.label}</strong>
-                    <span className="muted small">
-                      {field.type} · {field.visibility}
-                      {field.required ? " · required" : ""}
-                    </span>
-                  </div>
-                  <ConfigActions
-                    onEdit={() => editField(field)}
-                    onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="card">
-            <h2>Routing rules</h2>
-            {config.routing_rules.length === 0 ? (
-              <EmptyState title="No routing rules">Tickets fall back to the category default team.</EmptyState>
-            ) : (
-              <ul className="config-list">
-                {config.routing_rules.map((rule) => (
-                  <li key={rule.id}>
-                    <div>
-                      <strong>{rule.name}</strong>
-                      <span className="muted small">→ {teamNameById.get(rule.team_id) ?? "Unknown team"}</span>
-                    </div>
-                    <ConfigActions
-                      onEdit={() => editRule(rule)}
-                      onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="card">
-            <h2>Canned responses</h2>
-            {(config.canned_responses?.length ?? 0) === 0 ? (
-              <EmptyState title="No canned responses">Save common replies as snippets for agents.</EmptyState>
-            ) : (
-              <ul className="config-list">
-                {config.canned_responses?.map((canned) => (
-                  <li key={canned.id}>
-                    <div>
-                      <strong>{canned.title}</strong>
-                      <span className="muted small">/{canned.shortcut} · {canned.body.slice(0, 50)}{canned.body.length > 50 ? "..." : ""}</span>
-                    </div>
-                    <ConfigActions
-                      onEdit={() => editCanned(canned)}
-                      onRemove={() => deactivate(`/t/${tenantSlug}/canned-responses/${canned.id}`, canned.title)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </div>
-
-      <section className="card">
+      <section className="card" id="notifications">
         <h2>Notification templates</h2>
         <p className="muted">
           Placeholders use <code>{"{{name}}"}</code> syntax. Notifications are queued for the worker and sent when SMTP is

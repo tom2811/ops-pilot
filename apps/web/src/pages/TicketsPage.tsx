@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatTicketNumber, isSlaAtRisk } from "@opspilot/core";
 import { api, downloadFile, errorMessage, formatDate, post, triggerDownload } from "../api.js";
@@ -274,14 +274,40 @@ export function TicketsPage() {
   const [data, setData] = useState<TicketList | null>(null);
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
-  const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [q, setQ] = useState(() => searchParams.get("q")?.trim() ?? "");
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(() => searchParams.get("new") === "1");
+  const lastUrlQ = useRef(searchParams.get("q")?.trim() ?? "");
+  const urlQ = searchParams.get("q")?.trim() ?? "";
+
+  useEffect(() => {
+    if (urlQ === lastUrlQ.current) return;
+    lastUrlQ.current = urlQ;
+    setSearch(urlQ);
+    setQ(urlQ);
+    setPage(1);
+  }, [urlQ]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const nextSearch = search.trim();
+      setQ(nextSearch);
+      setPage(1);
+      const next = new URLSearchParams(searchParams);
+      if (nextSearch) next.set("q", nextSearch);
+      else next.delete("q");
+      if (next.toString() !== searchParams.toString()) {
+        lastUrlQ.current = nextSearch;
+        setSearchParams(next, { replace: true });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (searchParams.get("new") !== "1") return;
@@ -464,7 +490,7 @@ export function TicketsPage() {
           >
             Search
           </button>
-          {(status || priority || q) && (
+          {(status || priority || q || search) && (
             <button
               className="button ghost"
               onClick={() => {
@@ -545,6 +571,8 @@ export function TicketsPage() {
               <tbody>
                 {data?.items.map((ticket) => {
                   const priorityMeta = priorities.get(ticket.priority_key);
+                  const isMerged = Boolean(ticket.merged_into_ticket_id);
+                  const isClosed = ticket.status_stage === "closed" || isMerged;
                   const slaBreached = Boolean(ticket.sla_resolution_breached_at || ticket.sla_response_breached_at);
                   const slaPaused = Boolean(ticket.sla_paused_at);
                   const slaWarning = Boolean(
@@ -554,6 +582,7 @@ export function TicketsPage() {
                     (ticket.sla_resolution_due_at && isSlaAtRisk(ticket.created_at, ticket.sla_resolution_due_at)),
                   );
                   const slaDue = ticket.sla_resolution_due_at;
+                  const slaStopped = ticket.resolved_at ?? ticket.closed_at;
                   return (
                     <tr key={ticket.id}>
                       <td className="mono nowrap">
@@ -579,7 +608,25 @@ export function TicketsPage() {
                       <td className="col-requester">{ticket.requester_name}</td>
                       <td className="col-owner">{ticket.assignee_name ?? "Unassigned"}</td>
                       <td className="col-sla nowrap">
-                        {slaBreached ? (
+                        {isClosed ? (
+                          slaBreached ? (
+                            <SlaBadge label="Breached" state="historical" />
+                          ) : isMerged ? (
+                            <SlaBadge label="Merged" state="historical" />
+                          ) : slaDue ? (
+                            <SlaBadge label="Met" state="met" />
+                          ) : (
+                            <span className="muted small">-</span>
+                          )
+                        ) : slaStopped ? (
+                          slaBreached ? (
+                            <SlaBadge label="Breached" state="breached" />
+                          ) : slaDue ? (
+                            <SlaBadge label="Met" state="met" />
+                          ) : (
+                            <span className="muted small">-</span>
+                          )
+                        ) : slaBreached ? (
                           <SlaBadge label="Breached" state="breached" />
                         ) : slaPaused ? (
                           <SlaBadge label="Paused" state="paused" />
