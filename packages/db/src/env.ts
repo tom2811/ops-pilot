@@ -5,8 +5,8 @@ config({ path: resolve(import.meta.dirname, "../../../.env") });
 config();
 
 export function adminDatabaseUrl(): string {
-  const url = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
-  if (!url) throw new Error("ADMIN_DATABASE_URL or DATABASE_URL is required");
+  const url = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+  if (!url) throw new Error("ADMIN_DATABASE_URL, DATABASE_URL_UNPOOLED, or DATABASE_URL is required");
   return url;
 }
 

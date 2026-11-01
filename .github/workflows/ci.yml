@@ -33,6 +33,7 @@ jobs:
       APP_DB_PASSWORD: opspilot_app
       WEB_ORIGIN: http://localhost:5173
       SESSION_COOKIE_SECURE: "false"
+      INBOUND_WEBHOOK_SECRET: dev-inbound-webhook-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

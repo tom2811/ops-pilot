@@ -18,6 +18,7 @@ type TenantSeed = {
   slug: string;
   name: string;
   prefix: string;
+  timezone: string;
   teams: Array<{ slug: string; name: string }>;
   categories: Array<{ slug: string; name: string; team: string }>;
   customFields: Array<{
@@ -34,8 +35,9 @@ const tenants: TenantSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000000001",
     slug: "acme",
-    name: "Acme Corp",
+    name: "Siam Telecom & Cloud (Thailand)",
     prefix: "ACM",
+    timezone: "Asia/Bangkok",
     teams: [
       { slug: "service-desk", name: "Service Desk" },
       { slug: "network", name: "Network Team" },
@@ -53,7 +55,15 @@ const tenants: TenantSeed[] = [
         type: "select",
         required: true,
         visibility: "public",
-        options: ["HQ", "Remote"],
+        options: [
+          "HQ",
+          "Bangkok Sathorn HQ",
+          "Bangkok Bangna DC",
+          "Chiang Mai Nimman POP",
+          "Phuket Town Hub",
+          "Rayong Industrial Gateway",
+          "Remote",
+        ],
       },
       { key: "asset_tag", label: "Asset tag", type: "text", required: false, visibility: "internal" },
     ],
@@ -61,8 +71,9 @@ const tenants: TenantSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000000002",
     slug: "globex",
-    name: "Globex",
+    name: "Irrawaddy Broadband & Telecom (Myanmar)",
     prefix: "GLX",
+    timezone: "Asia/Yangon",
     teams: [{ slug: "it-ops", name: "IT Operations" }],
     categories: [
       { slug: "hardware", name: "Hardware", team: "it-ops" },
@@ -76,6 +87,20 @@ const tenants: TenantSeed[] = [
         type: "text",
         required: false,
         visibility: "public",
+      },
+      {
+        key: "site",
+        label: "Site",
+        type: "select",
+        required: false,
+        visibility: "public",
+        options: [
+          "Yangon Pyay Road HQ",
+          "Yangon Yankin NOC",
+          "Mandalay 78th Hub",
+          "Naypyidaw Zabuthiri Office",
+          "Remote",
+        ],
       },
     ],
   },
@@ -99,37 +124,37 @@ const users: UserSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000001001",
     email: "admin@acme.test",
-    name: "Avery Admin",
+    name: "Somchai Prasert",
     memberships: [{ tenantSlug: "acme", role: "tenant_admin" }],
   },
   {
     id: "00000000-0000-4000-8000-000000001002",
     email: "agent@acme.test",
-    name: "Alex Agent",
+    name: "Nattaporn Srisai",
     memberships: [{ tenantSlug: "acme", role: "agent" }],
   },
   {
     id: "00000000-0000-4000-8000-000000001003",
     email: "employee@acme.test",
-    name: "Erin Employee",
+    name: "Kanya Wongsuwan",
     memberships: [{ tenantSlug: "acme", role: "employee" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002001",
     email: "admin@globex.test",
-    name: "Gale Admin",
+    name: "Aung Kyaw",
     memberships: [{ tenantSlug: "globex", role: "tenant_admin" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002002",
     email: "agent@globex.test",
-    name: "Gabe Agent",
+    name: "Thida Win",
     memberships: [{ tenantSlug: "globex", role: "agent" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002003",
     email: "employee@globex.test",
-    name: "Gina Employee",
+    name: "Min Thu",
     memberships: [{ tenantSlug: "globex", role: "employee" }],
   },
   {
@@ -158,6 +183,8 @@ async function main() {
     await client.query(`delete from inbound_emails where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from ticket_links where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from ticket_comments where tenant_id in (${seedTenantIds})`);
+    await client.query(`delete from ticket_status_history where tenant_id in (${seedTenantIds})`);
+    await client.query(`delete from ticket_assignment_history where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from tickets where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from audit_log where tenant_id in (${seedTenantIds})`);
     await client.query("delete from tenants where slug in ('acme', 'globex')");
@@ -175,9 +202,9 @@ async function main() {
       );
       await client.query(
         "insert into tenant_settings (tenant_id, timezone, ticket_prefix) values ($1, $2, $3)",
-        [tenant.id, "Europe/London", tenant.prefix],
+        [tenant.id, tenant.timezone, tenant.prefix],
       );
-      await client.query("insert into ticket_counters (tenant_id, next_number) values ($1, 3)", [tenant.id]);
+      await client.query("insert into ticket_counters (tenant_id, next_number) values ($1, 7)", [tenant.id]);
 
       const teamIdBySlug = new Map<string, string>();
       for (const team of tenant.teams) {
@@ -378,119 +405,429 @@ async function main() {
       return row.id;
     }
 
+    async function insertTicket(params: {
+      tenantId: string;
+      id: string;
+      number: number;
+      subject: string;
+      description: string;
+      requesterId: string;
+      assigneeId?: string;
+      teamId?: string;
+      categoryId: string;
+      priorityId: string;
+      statusId: string;
+      customFields: Record<string, unknown>;
+      pendingReason?: string;
+      resolutionSummary?: string;
+      firstRespondedAt?: string;
+      resolvedAt?: string;
+      closedAt?: string;
+      createdAt: string;
+      updatedAt: string;
+    }) {
+      await client.query(
+        `insert into tickets
+          (tenant_id, id, number, subject, description, requester_id, assignee_id, team_id,
+           category_id, priority_id, status_id, custom_fields, pending_reason, resolution_summary,
+           version, first_responded_at, resolved_at, closed_at, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1,$15,$16,$17,$18,$19)`,
+        [
+          params.tenantId,
+          params.id,
+          params.number,
+          params.subject,
+          params.description,
+          params.requesterId,
+          params.assigneeId ?? null,
+          params.teamId ?? null,
+          params.categoryId,
+          params.priorityId,
+          params.statusId,
+          JSON.stringify(params.customFields),
+          params.pendingReason ?? null,
+          params.resolutionSummary ?? null,
+          params.firstRespondedAt ?? null,
+          params.resolvedAt ?? null,
+          params.closedAt ?? null,
+          params.createdAt,
+          params.updatedAt,
+        ],
+      );
+    }
+
+    // ==========================================
+    // THAILAND TICKETS (acme)
+    // ==========================================
+
+    // Ticket ACM-1: High priority DWDM link flap (In Progress)
     const acmeTicket1 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket1,
+      number: 1,
+      subject: "Bangkok Sathorn to Chiang Mai Nimman DWDM link latency spike",
+      description:
+        "Since 08:30 ICT, the 100Gbps DWDM backbone circuit between Bangkok Sathorn DC and Chiang Mai Nimman POP is experiencing intermittent packet loss (3.8%) and round-trip delay exceeding 48ms. Traffic automatically diverted to secondary route via Phitsanulok.",
+      requesterId: employeeAcme,
+      assigneeId: agentAcme,
+      teamId: await team(acme, "network"),
+      categoryId: await category(acme, "network"),
+      priorityId: await priority(acme, "p2"),
+      statusId: await status(acme, "in_progress"),
+      customFields: { site: "HQ", asset_tag: "DWDM-BKK-01" },
+      firstRespondedAt: "2026-10-28T09:15:00Z",
+      createdAt: "2026-10-28T09:00:00Z",
+      updatedAt: "2026-10-28T09:30:00Z",
+    });
+
     await client.query(
-      `insert into tickets
-        (tenant_id, id, number, subject, description, requester_id, assignee_id, team_id,
-         category_id, priority_id, status_id, custom_fields, version, first_responded_at, created_at, updated_at)
-       values ($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,$13,$13)`,
-      [
-        acme,
-        acmeTicket1,
-        "VPN drops every 10 minutes",
-        "Since this morning the VPN disconnects every ten minutes. Working remotely.",
-        employeeAcme,
-        agentAcme,
-        await team(acme, "network"),
-        await category(acme, "network"),
-        await priority(acme, "p2"),
-        await status(acme, "in_progress"),
-        JSON.stringify({ site: "Remote", asset_tag: "LT-1042" }),
-        "2026-10-18T09:30:00Z",
-        "2026-10-18T09:00:00Z",
-      ],
-    );
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-18T09:30:00Z')",
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-28T09:15:00Z')",
       [acme, acmeTicket1, await status(acme, "in_progress"), agentAcme],
     );
     await client.query(
       `insert into ticket_assignment_history
         (tenant_id, ticket_id, to_assignee_id, to_team_id, actor_id, actor_role, source, created_at)
-       values ($1,$2,$3,$4,$5,'agent','manual','2026-10-18T09:20:00Z')`,
+       values ($1,$2,$3,$4,$5,'agent','manual','2026-10-28T09:10:00Z')`,
       [acme, acmeTicket1, agentAcme, await team(acme, "network"), agentAcme],
     );
     await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-18T09:05:00Z')",
-      [acme, acmeTicket1, employeeAcme, "It drops on both Wi-Fi and wired connections."],
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-28T09:05:00Z')",
+      [acme, acmeTicket1, employeeAcme, "Customer NOC at Agoda Bangkok office reported latency spike reaching 52ms."],
     );
     await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'internal','2026-10-18T09:25:00Z')",
-      [acme, acmeTicket1, agentAcme, "Concentrator logs show rekey failures. Checking firmware."],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-18T09:30:00Z')",
-      [acme, acmeTicket1, agentAcme, "We found a concentrator firmware issue and are applying a fix."],
-    );
-
-    const acmeTicket2 = randomUUID();
-    await client.query(
-      `insert into tickets
-        (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id,
-         custom_fields, created_at, updated_at)
-       values ($1,$2,2,$3,$4,$5,$6,$7,$8,$9,'2026-10-19T11:00:00Z','2026-10-19T11:00:00Z')`,
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'internal','2026-10-28T09:20:00Z')",
       [
         acme,
-        acmeTicket2,
-        "New starter laptop",
-        "Please prepare a laptop for a new starter on Monday.",
-        employeeAcme,
-        await category(acme, "hardware"),
-        await priority(acme, "p3"),
-        await status(acme, "new"),
-        JSON.stringify({ site: "HQ" }),
+        acmeTicket1,
+        agentAcme,
+        "OTDR scan from Bangna shows optical reflection anomaly at KM 142 near Nakhon Sawan joint enclosure. Dispatching AIS field crew.",
+      ],
+    );
+    await client.query(
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-28T09:30:00Z')",
+      [
+        acme,
+        acmeTicket1,
+        agentAcme,
+        "Traffic rerouted via secondary Eastern ring. Latency stabilized to 22ms while optical fiber inspection is ongoing.",
       ],
     );
 
-    const globexTicket1 = randomUUID();
+    // Ticket ACM-2: 5G Private SIM cards provisioning (New)
+    const acmeTicket2 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket2,
+      number: 2,
+      subject: "Procure 50 AIS 5G Private APN SIM cards for Rayong smart meter pilot",
+      description:
+        "Please provision 50 AIS 5G M2M private APN SIM cards with fixed static IPs for industrial telemetry deployment at Map Ta Phut Industrial Estate, Rayong.",
+      requesterId: employeeAcme,
+      categoryId: await category(acme, "hardware"),
+      priorityId: await priority(acme, "p3"),
+      statusId: await status(acme, "new"),
+      customFields: { site: "HQ" },
+      createdAt: "2026-10-29T10:00:00Z",
+      updatedAt: "2026-10-29T10:00:00Z",
+    });
+
     await client.query(
-      `insert into tickets
-        (tenant_id, id, number, subject, description, requester_id, team_id, category_id, priority_id,
-         status_id, custom_fields, created_at, updated_at)
-       values ($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,'2026-10-20T08:00:00Z','2026-10-20T08:00:00Z')`,
-      [
-        globex,
-        globexTicket1,
-        "Password reset for finance shared mailbox",
-        "The finance shared mailbox password expired.",
-        employeeGlobex,
-        await team(globex, "it-ops"),
-        await category(globex, "software"),
-        await priority(globex, "p1"),
-        await status(globex, "new"),
-        JSON.stringify({ department: "Finance" }),
-      ],
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-10-29T10:00:00Z')",
+      [acme, acmeTicket2, await status(acme, "new")],
+    );
+
+    // Ticket ACM-3: Bangna DC Precision AC Unit compressor alert (Pending)
+    const acmeTicket3 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket3,
+      number: 3,
+      subject: "Bangna Data Center Suite 4B precision cooling unit 2 compressor alarm",
+      description:
+        "Building Management System (BMS) triggered a high head pressure alarm on Stulz PAC Unit 2 in cold aisle 4B. Redundant PAC Unit 3 engaged automatically, maintaining aisle temperature at 21.4°C.",
+      requesterId: employeeAcme,
+      assigneeId: agentAcme,
+      teamId: await team(acme, "service-desk"),
+      categoryId: await category(acme, "hardware"),
+      priorityId: await priority(acme, "p2"),
+      statusId: await status(acme, "pending"),
+      customFields: { site: "Bangkok Bangna DC", asset_tag: "PAC-BKK-04B2" },
+      pendingReason: "Awaiting Daikin/Stulz HVAC technician arrival with replacement R410A expansion valve.",
+      firstRespondedAt: "2026-10-30T04:45:00Z",
+      createdAt: "2026-10-30T04:30:00Z",
+      updatedAt: "2026-10-30T05:15:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-30T05:15:00Z')",
+      [acme, acmeTicket3, await status(acme, "pending"), agentAcme],
     );
     await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-10-20T08:00:00Z')",
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'internal','2026-10-30T05:10:00Z')",
+      [acme, acmeTicket3, agentAcme, "Stulz authorized maintenance contractor dispatched; ETA 11:30 ICT."],
+    );
+
+    // Ticket ACM-4: Metro Dark Fiber Cut (Resolved)
+    const acmeTicket4 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket4,
+      number: 4,
+      subject: "Metro dark fiber ring 2 severed near MRT Khlong Toei station",
+      description:
+        "Metro dark fiber ring 2 broken during underground MRT construction excavation on Rama IV Road. BGP fast reroute preserved connectivity over northern route with zero dropped transit sessions.",
+      requesterId: employeeAcme,
+      assigneeId: agentAcme,
+      teamId: await team(acme, "network"),
+      categoryId: await category(acme, "network"),
+      priorityId: await priority(acme, "p1"),
+      statusId: await status(acme, "resolved"),
+      customFields: { site: "Bangkok Sathorn HQ", asset_tag: "FIBER-METRO-02" },
+      firstRespondedAt: "2026-10-27T02:12:00Z",
+      resolvedAt: "2026-10-27T06:45:00Z",
+      resolutionSummary:
+        "Emergency splicing team reached subterranean duct near Khlong Toei junction. Fusion spliced all 48 single-mode optical cores. OTDR test confirmed loss under 0.2 dB/km.",
+      createdAt: "2026-10-27T02:00:00Z",
+      updatedAt: "2026-10-27T06:45:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-27T06:45:00Z')",
+      [acme, acmeTicket4, await status(acme, "resolved"), agentAcme],
+    );
+    await client.query(
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-27T06:45:00Z')",
+      [acme, acmeTicket4, agentAcme, "Fiber splicing complete and verified. Optical power levels restored to nominal -14.2 dBm."],
+    );
+
+    // Ticket ACM-5: Phuket POP BGP Peer Session (Closed)
+    const acmeTicket5 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket5,
+      number: 5,
+      subject: "Phuket Town POP Juniper MX204 BGP peering timer mismatch",
+      description:
+        "Upstream BGP peering session with National Telecom (NT) at Phuket Town internet exchange experienced 3 flaps due to hold timer mismatch during router maintenance window.",
+      requesterId: employeeAcme,
+      assigneeId: agentAcme,
+      teamId: await team(acme, "network"),
+      categoryId: await category(acme, "network"),
+      priorityId: await priority(acme, "p3"),
+      statusId: await status(acme, "closed"),
+      customFields: { site: "Phuket Town Hub", asset_tag: "RTR-PKT-MX204" },
+      firstRespondedAt: "2026-10-25T14:20:00Z",
+      resolvedAt: "2026-10-25T15:10:00Z",
+      closedAt: "2026-10-26T15:10:00Z",
+      resolutionSummary:
+        "Adjusted BGP keepalive to 30s and hold timer to 90s to match upstream NT configuration. Session verified stable over 24-hour observation.",
+      createdAt: "2026-10-25T14:00:00Z",
+      updatedAt: "2026-10-26T15:10:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-26T15:10:00Z')",
+      [acme, acmeTicket5, await status(acme, "closed"), agentAcme],
+    );
+
+    // Ticket ACM-6: Quarterly optical transceiver audit (New)
+    const acmeTicket6 = randomUUID();
+    await insertTicket({
+      tenantId: acme,
+      id: acmeTicket6,
+      number: 6,
+      subject: "Quarterly optical transceiver inventory count for Bangkok Sathorn HQ",
+      description:
+        "Please perform physical serial verification and inventory count of spare 100G QSFP28 LR4 and 400G QSFP-DD optical modules in the Sathorn HQ secure telecom cage.",
+      requesterId: employeeAcme,
+      categoryId: await category(acme, "access"),
+      priorityId: await priority(acme, "p4"),
+      statusId: await status(acme, "new"),
+      customFields: { site: "Bangkok Sathorn HQ" },
+      createdAt: "2026-11-01T08:00:00Z",
+      updatedAt: "2026-11-01T08:00:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-11-01T08:00:00Z')",
+      [acme, acmeTicket6, await status(acme, "new")],
+    );
+
+    // ==========================================
+    // MYANMAR TICKETS (globex)
+    // ==========================================
+
+    // Ticket GLX-1: Mandalay Hub Generator Switchover (New)
+    const globexTicket1 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket1,
+      number: 1,
+      subject: "Mandalay 78th Hub standby diesel generator auto-start on YESC grid failure",
+      description:
+        "Mandalay electricity supply dropped at 06:15 MMT across Chanayethazan township. Perkins 150kVA standby diesel generator started automatically. Server room UPS battery online, but bulk fuel tank is at 35% capacity.",
+      requesterId: employeeGlobex,
+      teamId: await team(globex, "it-ops"),
+      categoryId: await category(globex, "software"),
+      priorityId: await priority(globex, "p1"),
+      statusId: await status(globex, "new"),
+      customFields: { department: "Power & Infrastructure", site: "Mandalay 78th Hub" },
+      createdAt: "2026-10-31T06:30:00Z",
+      updatedAt: "2026-10-31T06:30:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-10-31T06:30:00Z')",
       [globex, globexTicket1, await status(globex, "new")],
     );
-
     await client.query(
-      `insert into tickets
-        (tenant_id, id, number, subject, description, requester_id, assignee_id, team_id, category_id,
-         priority_id, status_id, custom_fields, resolution_summary, resolved_at, first_responded_at,
-         created_at, updated_at)
-       values ($1,$2,2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)`,
-      [
-        globex,
-        randomUUID(),
-        "Printer offline on floor 2",
-        "The floor 2 printer is not responding.",
-        employeeGlobex,
-        agentGlobex,
-        await team(globex, "it-ops"),
-        await category(globex, "hardware"),
-        await priority(globex, "p3"),
-        await status(globex, "resolved"),
-        JSON.stringify({ department: "Operations" }),
-        "Reconnected the printer to the network and cleared the queue.",
-        "2026-10-17T14:00:00Z",
-        "2026-10-17T12:30:00Z",
-        "2026-10-17T12:00:00Z",
-      ],
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-31T06:35:00Z')",
+      [globex, globexTicket1, employeeGlobex, "Municipal power offline. Requesting emergency fuel tanker dispatch from Denko Petroleum."],
     );
 
+    // Ticket GLX-2: Pyay Road MPT Fiber Circuit Resplicing (Resolved)
+    const globexTicket2 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket2,
+      number: 2,
+      subject: "MPT primary fiber link cut on Pyay Road near Hledan junction",
+      description:
+        "Primary 10Gbps terrestrial backhaul cut during drainage trenching near Hledan Centre. Automatic failover redirected core internet traffic through Starlink Business terminal.",
+      requesterId: employeeGlobex,
+      assigneeId: agentGlobex,
+      teamId: await team(globex, "it-ops"),
+      categoryId: await category(globex, "hardware"),
+      priorityId: await priority(globex, "p3"),
+      statusId: await status(globex, "resolved"),
+      customFields: { department: "Network Operations", site: "Yangon Pyay Road HQ" },
+      firstRespondedAt: "2026-10-26T08:20:00Z",
+      resolvedAt: "2026-10-26T14:30:00Z",
+      resolutionSummary:
+        "MPT joint splicing crew repaired underground conduit. Traffic transitioned from Starlink backup back to low-latency terrestrial fiber. Ping to Singapore cloud gateway: 24ms.",
+      createdAt: "2026-10-26T08:00:00Z",
+      updatedAt: "2026-10-26T14:30:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-26T14:30:00Z')",
+      [globex, globexTicket2, await status(globex, "resolved"), agentGlobex],
+    );
+    await client.query(
+      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-26T14:30:00Z')",
+      [globex, globexTicket2, agentGlobex, "MPT optical splice complete. Signal levels tested at -16.8 dBm. Primary circuit restored."],
+    );
+
+    // Ticket GLX-3: Yankin NOC Satellite Uplink Rain Fade (In Progress)
+    const globexTicket3 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket3,
+      number: 3,
+      subject: "Yankin NOC secondary satellite uplink severe rain fade during monsoon squall",
+      description:
+        "Tropical monsoon storm over Yankin township causing signal degradation on Ku-band satellite backup dish. Carrier-to-noise ratio dropped below threshold with 12% packet loss.",
+      requesterId: employeeGlobex,
+      assigneeId: agentGlobex,
+      teamId: await team(globex, "it-ops"),
+      categoryId: await category(globex, "network"),
+      priorityId: await priority(globex, "p2"),
+      statusId: await status(globex, "in_progress"),
+      customFields: { department: "NOC Satellite", site: "Yangon Yankin NOC" },
+      firstRespondedAt: "2026-10-30T11:15:00Z",
+      createdAt: "2026-10-30T11:00:00Z",
+      updatedAt: "2026-10-30T11:30:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-30T11:15:00Z')",
+      [globex, globexTicket3, await status(globex, "in_progress"), agentGlobex],
+    );
+
+    // Ticket GLX-4: KBZPay Payment Webhook Timeout (Pending)
+    const globexTicket4 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket4,
+      number: 4,
+      subject: "KBZPay merchant webhook settlement endpoint intermittent HTTP 504 timeouts",
+      description:
+        "Telecom subscriber top-up portal experiencing delays receiving settlement webhooks from KBZPay banking gateway during evening peak hours.",
+      requesterId: employeeGlobex,
+      assigneeId: agentGlobex,
+      teamId: await team(globex, "it-ops"),
+      categoryId: await category(globex, "software"),
+      priorityId: await priority(globex, "p3"),
+      statusId: await status(globex, "pending"),
+      customFields: { department: "Billing Systems", site: "Yangon Pyay Road HQ" },
+      pendingReason: "Awaiting KBZ Bank API integration team verification of upstream rate limits.",
+      firstRespondedAt: "2026-10-29T16:30:00Z",
+      createdAt: "2026-10-29T16:00:00Z",
+      updatedAt: "2026-10-29T17:00:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-29T17:00:00Z')",
+      [globex, globexTicket4, await status(globex, "pending"), agentGlobex],
+    );
+
+    // Ticket GLX-5: Naypyidaw Router Flash Replacement (Closed)
+    const globexTicket5 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket5,
+      number: 5,
+      subject: "Naypyidaw Zabuthiri branch Cisco 4331 ISR router bootflash sector error",
+      description:
+        "Automated health monitor detected read I/O errors on internal bootflash storage in Naypyidaw branch aggregation router.",
+      requesterId: employeeGlobex,
+      assigneeId: agentGlobex,
+      teamId: await team(globex, "it-ops"),
+      categoryId: await category(globex, "hardware"),
+      priorityId: await priority(globex, "p2"),
+      statusId: await status(globex, "closed"),
+      customFields: { department: "Enterprise Field Support", site: "Naypyidaw Zabuthiri Office" },
+      firstRespondedAt: "2026-10-24T05:30:00Z",
+      resolvedAt: "2026-10-24T10:00:00Z",
+      closedAt: "2026-10-25T10:00:00Z",
+      resolutionSummary:
+        "Field engineer swapped flash module, flashed IOS-XE 17.6.4 image, and synced startup configuration from central Git repository.",
+      createdAt: "2026-10-24T05:00:00Z",
+      updatedAt: "2026-10-25T10:00:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-25T10:00:00Z')",
+      [globex, globexTicket5, await status(globex, "closed"), agentGlobex],
+    );
+
+    // Ticket GLX-6: Taunggyi Tower Solar Battery (New)
+    const globexTicket6 = randomUUID();
+    await insertTicket({
+      tenantId: globex,
+      id: globexTicket6,
+      number: 6,
+      subject: "Taunggyi microwave repeater solar battery string voltage imbalance check",
+      description:
+        "Shan State mountain repeater telemetry reports 48V LiFePO4 battery rack cell 4 voltage deviation exceeding 0.15V after 3 days of heavy cloud cover.",
+      requesterId: employeeGlobex,
+      categoryId: await category(globex, "hardware"),
+      priorityId: await priority(globex, "p3"),
+      statusId: await status(globex, "new"),
+      customFields: { department: "Remote Towers" },
+      createdAt: "2026-11-01T09:00:00Z",
+      updatedAt: "2026-11-01T09:00:00Z",
+    });
+
+    await client.query(
+      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-11-01T09:00:00Z')",
+      [globex, globexTicket6, await status(globex, "new")],
+    );
+
+    // ==========================================
+    // AUDIT LOG
+    // ==========================================
     const auditCorrelation = randomUUID();
     const auditRows: Array<{
       actorId: string;
@@ -510,7 +847,7 @@ async function main() {
         entityId: acmeTicket1,
         before: { status: "new" },
         after: { status: "in_progress" },
-        createdAt: "2026-10-18T09:30:00Z",
+        createdAt: "2026-10-28T09:15:00Z",
       },
       {
         actorId: agentAcme,
@@ -520,7 +857,7 @@ async function main() {
         entityId: acmeTicket1,
         before: { assignee_id: null },
         after: { assignee_id: agentAcme },
-        createdAt: "2026-10-18T09:20:00Z",
+        createdAt: "2026-10-28T09:10:00Z",
       },
       {
         actorId: employeeAcme,
@@ -529,8 +866,8 @@ async function main() {
         entityType: "ticket",
         entityId: acmeTicket1,
         before: null,
-        after: { subject: "VPN drops every 10 minutes" },
-        createdAt: "2026-10-18T09:00:00Z",
+        after: { subject: "Bangkok Sathorn to Chiang Mai Nimman DWDM link latency spike" },
+        createdAt: "2026-10-28T09:00:00Z",
       },
       {
         actorId: agentAcme,
@@ -539,8 +876,8 @@ async function main() {
         entityType: "notification_template",
         entityId: randomUUID(),
         before: null,
-        after: { key: "ticket_created", subject: "Your ticket was created" },
-        createdAt: "2026-10-17T16:45:00Z",
+        after: { key: "ticket_created", subject: "Your telecom support ticket was created" },
+        createdAt: "2026-10-27T16:45:00Z",
       },
     ];
     for (const row of auditRows) {
@@ -564,7 +901,7 @@ async function main() {
     }
 
     await client.query("commit");
-    console.log("seeded acme and globex");
+    console.log("seeded Siam Telecom & Cloud (Thailand) and Irrawaddy Broadband & Telecom (Myanmar)");
   } catch (error) {
     await client.query("rollback");
     throw error;

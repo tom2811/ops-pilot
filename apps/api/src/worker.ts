@@ -23,6 +23,8 @@ const workerEnv = z
     WORKER_DATABASE_URL: z.string().min(1).optional(),
     ADMIN_DATABASE_URL: z.string().min(1).optional(),
     DATABASE_URL: z.string().min(1).optional(),
+    DATABASE_URL_UNPOOLED: z.string().min(1).optional(),
+    NEON_BRANCH: z.string().optional(),
     N8N_WEBHOOK_URL: z.string().url().optional(),
     N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
     PUBLIC_API_URL: z.string().url().default("http://localhost:3000/api"),
@@ -46,8 +48,11 @@ const workerEnv = z
   .parse(process.env);
 
 const connectionString =
-  workerEnv.WORKER_DATABASE_URL ?? workerEnv.ADMIN_DATABASE_URL ?? workerEnv.DATABASE_URL;
-if (!connectionString) throw new Error("WORKER_DATABASE_URL or ADMIN_DATABASE_URL is required");
+  workerEnv.WORKER_DATABASE_URL ??
+  workerEnv.DATABASE_URL_UNPOOLED ??
+  workerEnv.ADMIN_DATABASE_URL ??
+  workerEnv.DATABASE_URL;
+if (!connectionString) throw new Error("WORKER_DATABASE_URL, DATABASE_URL_UNPOOLED, or ADMIN_DATABASE_URL is required");
 if (workerEnv.N8N_WEBHOOK_URL && !workerEnv.N8N_WEBHOOK_SECRET) {
   throw new Error("N8N_WEBHOOK_SECRET is required when N8N_WEBHOOK_URL is set");
 }
