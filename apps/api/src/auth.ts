@@ -35,7 +35,7 @@ export function currentSessionHash(req: FastifyRequest): string | null {
 export function setSessionCookie(reply: FastifyReply, token: string, expiresAt: Date): void {
   reply.setCookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: env.SESSION_COOKIE_SECURE ? "none" : "lax",
     secure: env.SESSION_COOKIE_SECURE,
     path: "/",
     expires: expiresAt,
@@ -43,7 +43,11 @@ export function setSessionCookie(reply: FastifyReply, token: string, expiresAt: 
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
+  reply.clearCookie(SESSION_COOKIE, {
+    path: "/",
+    sameSite: env.SESSION_COOKIE_SECURE ? "none" : "lax",
+    secure: env.SESSION_COOKIE_SECURE,
+  });
 }
 
 export async function getSessionUser(req: FastifyRequest): Promise<AuthUser | null> {
