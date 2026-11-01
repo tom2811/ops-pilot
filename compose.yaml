@@ -14,6 +14,7 @@ x-app-env: &app-env
   PUBLIC_API_URL: http://api:3000/api
   N8N_WEBHOOK_URL: http://n8n:5678/webhook/opspilot/ticket-created
   N8N_WEBHOOK_SECRET: dev-webhook-secret
+  INBOUND_WEBHOOK_SECRET: ${INBOUND_WEBHOOK_SECRET:-dev-inbound-webhook-secret}
   SMTP_HOST: ${SMTP_HOST:-}
   SMTP_PORT: ${SMTP_PORT:-587}
   SMTP_SECURE: ${SMTP_SECURE:-false}
@@ -59,8 +60,8 @@ services:
     command: ["corepack", "pnpm", "db:seed"]
     environment: *app-env
     depends_on:
-      postgres:
-        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     profiles: ["demo"]
     restart: "no"
 

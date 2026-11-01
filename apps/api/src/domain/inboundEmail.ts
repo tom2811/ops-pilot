@@ -142,23 +142,6 @@ export async function processInboundEmail(
         tenantPrefix = bySender.rows[0].ticket_prefix;
       }
     }
-
-    // Fallback: first active tenant
-    if (!tenantId) {
-      const fallback = await client.query<{ id: string; slug: string; ticket_prefix: string }>(
-        `select t.id, t.slug, coalesce(ts.ticket_prefix, 'OPS') as ticket_prefix
-         from tenants t
-         left join tenant_settings ts on ts.tenant_id = t.id
-         where t.status = 'active'
-         order by t.created_at asc
-         limit 1`,
-      );
-      if (fallback.rows[0]) {
-        tenantId = fallback.rows[0].id;
-        tenantSlug = fallback.rows[0].slug;
-        tenantPrefix = fallback.rows[0].ticket_prefix;
-      }
-    }
   }
 
   if (!tenantId) {

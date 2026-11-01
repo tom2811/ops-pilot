@@ -1,10 +1,28 @@
+import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { inboundEmailInputSchema } from "@opspilot/core";
 import { adminPool } from "../db.js";
-import { notFound } from "../errors.js";
+import { env } from "../env.js";
+import { AppError, notFound } from "../errors.js";
 import { processInboundEmail } from "../domain/inboundEmail.js";
 
+function assertWebhookSecret(provided: string | string[] | undefined): void {
+  const value = Array.isArray(provided) ? provided[0] : provided;
+  const expected = env.INBOUND_WEBHOOK_SECRET;
+  if (
+    !value ||
+    value.length !== expected.length ||
+    !timingSafeEqual(Buffer.from(value), Buffer.from(expected))
+  ) {
+    throw new AppError(401, "Inbound webhook secret is missing or invalid");
+  }
+}
+
 export async function inboundRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("preHandler", async (req) => {
+    assertWebhookSecret(req.headers["x-opspilot-inbound-secret"]);
+  });
+
   // Tenant-scoped inbound webhook
   app.post("/t/:tenantSlug/inbound/email", async (req, reply) => {
     const { tenantSlug } = req.params as { tenantSlug: string };

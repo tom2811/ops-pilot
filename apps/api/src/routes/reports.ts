@@ -40,13 +40,17 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       )`;
       const params = [tenantId, role, userId];
 
-      const [summary, byStatus, byPriority, byTeam, trend, csat, recentFeedback] = await Promise.all([
+      const [summary, byStatus, byPriority, byTeam, byCategory, trend, csat, recentFeedback] = await Promise.all([
         client.query(
           `${visibleCte}
            select count(*)::int as total,
                   count(*) filter (where stage not in ('resolved', 'closed'))::int as open,
                   count(*) filter (where stage not in ('resolved', 'closed') and assignee_id is null)::int as unassigned,
                   count(*) filter (where sla_response_breached_at is not null or sla_resolution_breached_at is not null)::int as sla_breached,
+                  case when count(*) filter (where sla_policy_id is not null) > 0
+                       then round((count(*) filter (where sla_policy_id is not null and sla_response_breached_at is null and sla_resolution_breached_at is null)::numeric * 100.0) / count(*) filter (where sla_policy_id is not null), 1)
+                       else 100.0
+                  end::float as sla_compliance_percent,
                   count(*) filter (where resolved_at >= now() - interval '7 days')::int as resolved_week,
                   count(*) filter (where created_at >= now() - ($4::int || ' days')::interval)::int as created_period,
                   coalesce(avg(extract(epoch from (resolved_at - created_at)) / 3600)
@@ -80,6 +84,15 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
            from visible v
            left join teams tm on tm.tenant_id = $1 and tm.id = v.team_id
            group by tm.name
+           order by count(*) desc`,
+          params,
+        ),
+        client.query(
+          `${visibleCte}
+           select coalesce(c.name, 'Uncategorized') as label, count(*)::int as count
+           from visible v
+           left join categories c on c.tenant_id = $1 and c.id = v.category_id
+           group by c.name
            order by count(*) desc`,
           params,
         ),
@@ -127,6 +140,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         open: 0,
         unassigned: 0,
         sla_breached: 0,
+        sla_compliance_percent: 100,
         resolved_week: 0,
         created_period: 0,
         avg_resolution_hours: 0,
@@ -138,6 +152,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         open: Number(rawSummary.open ?? 0),
         unassigned: Number(rawSummary.unassigned ?? 0),
         sla_breached: Number(rawSummary.sla_breached ?? 0),
+        sla_compliance_percent: Number(rawSummary.sla_compliance_percent ?? 100),
         resolved_week: Number(rawSummary.resolved_week ?? 0),
         created_period: Number(rawSummary.created_period ?? 0),
         avg_resolution_hours: Number(rawSummary.avg_resolution_hours ?? 0),
@@ -150,6 +165,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         by_status: byStatus.rows,
         by_priority: byPriority.rows,
         by_team: byTeam.rows,
+        by_category: byCategory.rows,
         trend: trend.rows,
         csat: csat.rows[0] ?? { average: 0, responses: 0, comments: 0 },
         recent_feedback: recentFeedback.rows,

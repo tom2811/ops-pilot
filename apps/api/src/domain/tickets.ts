@@ -157,27 +157,33 @@ async function isTeamMember(
   return (result.rowCount ?? 0) > 0;
 }
 
+async function hasReadAccess(
+  client: pg.PoolClient,
+  ticket: TicketRow,
+  userId: string,
+  role: Role,
+): Promise<boolean> {
+  if (role === "tenant_admin") return true;
+  if (role === "employee") {
+    if (ticket.requester_id === userId) return true;
+    const mergedParticipant = await client.query(
+      "select 1 from tickets where tenant_id = $1 and merged_into_ticket_id = $2 and requester_id = $3",
+      [ticket.tenant_id, ticket.id, userId],
+    );
+    return (mergedParticipant.rowCount ?? 0) > 0;
+  }
+  if (ticket.assignee_id === userId) return true;
+  if (await isTeamMember(client, ticket.tenant_id, userId, ticket.team_id)) return true;
+  return !ticket.assignee_id && !ticket.team_id;
+}
+
 export async function assertCanRead(
   client: pg.PoolClient,
   ticket: TicketRow,
   userId: string,
   role: Role,
 ): Promise<void> {
-  if (role === "tenant_admin") return;
-  if (role === "employee") {
-    if (ticket.requester_id === userId) return;
-    const mergedParticipant = await client.query(
-      "select 1 from tickets where tenant_id = $1 and merged_into_ticket_id = $2 and requester_id = $3",
-      [ticket.tenant_id, ticket.id, userId],
-    );
-    if ((mergedParticipant.rowCount ?? 0) > 0) return;
-    notFound();
-    return;
-  }
-  if (ticket.assignee_id === userId) return;
-  if (await isTeamMember(client, ticket.tenant_id, userId, ticket.team_id)) return;
-  if (!ticket.assignee_id && !ticket.team_id) return;
-  notFound();
+  if (!(await hasReadAccess(client, ticket, userId, role))) notFound();
 }
 
 export type TicketListInput = {
@@ -236,8 +242,31 @@ export async function listTickets(
     conditions.push("s.stage in ('resolved', 'closed')");
   }
   if (input.q) {
-    conditions.push(`to_tsvector('simple', t.subject || ' ' || t.description) @@ plainto_tsquery('simple', $${index++})`);
-    params.push(input.q);
+    const trimmed = input.q.trim();
+    if (trimmed) {
+      const numMatch = trimmed.match(/^(?:[A-Za-z]+[-_# ]*)?0*(\d+)$/);
+      if (numMatch && numMatch[1]) {
+        const ticketNum = parseInt(numMatch[1], 10);
+        const pattern = `%${trimmed.replace(/[%_\\]/g, "\\$&")}%`;
+        conditions.push(
+          `(t.number = $${index++} or t.subject ilike $${index++} or coalesce(t.description, '') ilike $${index++} or req.display_name ilike $${index++})`,
+        );
+        params.push(ticketNum, pattern, pattern, pattern);
+      } else {
+        const words = trimmed.split(/\s+/).filter(Boolean);
+        if (words.length > 0) {
+          const wordConditions: string[] = [];
+          for (const word of words) {
+            const wordPattern = `%${word.replace(/[%_\\]/g, "\\$&")}%`;
+            wordConditions.push(
+              `(t.subject ilike $${index++} or coalesce(t.description, '') ilike $${index++} or req.display_name ilike $${index++})`,
+            );
+            params.push(wordPattern, wordPattern, wordPattern);
+          }
+          conditions.push(`(${wordConditions.join(" and ")})`);
+        }
+      }
+    }
   }
 
   params.push(input.limit, input.offset);
@@ -1097,12 +1126,18 @@ export async function ticketDetail(
     created_at: Date;
     actor_role: string;
     actor_name: string | null;
+    action: string;
   }>(
-    `select a.created_at, a.actor_role, u.display_name as actor_name
+    `select a.created_at, a.actor_role, u.display_name as actor_name, a.action
      from audit_log a
+     join tickets t on t.tenant_id = a.tenant_id and t.id = a.entity_id
      left join users u on u.id = a.actor_id
      where a.tenant_id = $1 and a.entity_type = 'ticket' and a.entity_id = $2
-       and a.action = 'ticket.updated'
+       and (
+         a.action = 'ticket.updated'
+         or (a.action = 'ticket.sla_response_breached' and t.sla_response_breached_at is not null)
+         or (a.action = 'ticket.sla_resolution_breached' and t.sla_resolution_breached_at is not null)
+       )
      order by a.created_at`,
     [tenantId, ticketId],
   );
@@ -1223,16 +1258,24 @@ export async function getTicketLinks(
     [tenantId, ticketId],
   );
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    link_type: (row.is_source ? row.raw_type : INVERSE_LINK_TYPES[row.raw_type] ?? row.raw_type) as TicketLinkType,
-    linked_ticket_id: row.linked_ticket_id,
-    linked_ticket_number: row.linked_ticket_number,
-    linked_ticket_subject: row.linked_ticket_subject,
-    linked_ticket_status: row.linked_ticket_status,
-    linked_ticket_stage: row.linked_ticket_stage,
-    created_at: row.created_at,
-  }));
+  const links: TicketLinkRow[] = [];
+  for (const row of result.rows) {
+    if (userId && role) {
+      const linkedTicket = await loadTicket(client, tenantId, row.linked_ticket_id);
+      if (!linkedTicket || !(await hasReadAccess(client, linkedTicket, userId, role))) continue;
+    }
+    links.push({
+      id: row.id,
+      link_type: (row.is_source ? row.raw_type : INVERSE_LINK_TYPES[row.raw_type] ?? row.raw_type) as TicketLinkType,
+      linked_ticket_id: row.linked_ticket_id,
+      linked_ticket_number: row.linked_ticket_number,
+      linked_ticket_subject: row.linked_ticket_subject,
+      linked_ticket_status: row.linked_ticket_status,
+      linked_ticket_stage: row.linked_ticket_stage,
+      created_at: row.created_at,
+    });
+  }
+  return links;
 }
 
 export async function createTicketLink(
@@ -1250,6 +1293,7 @@ export async function createTicketLink(
 
   const source = await loadTicket(client, tenantId, ticketId);
   if (!source) notFound();
+  await assertCanRead(client, source, userId, role);
 
   const targetRes = await client.query<{
     id: string;
@@ -1268,6 +1312,11 @@ export async function createTicketLink(
   if (!target) {
     badRequest(`Ticket #${input.targetTicketNumber} not found`);
   }
+  const targetTicket = await loadTicket(client, tenantId, target.id);
+  if (!targetTicket) {
+    badRequest(`Ticket #${input.targetTicketNumber} not found`);
+  }
+  await assertCanRead(client, targetTicket, userId, role);
 
   if (source.id === target.id) {
     badRequest("Cannot link a ticket to itself");
@@ -1334,6 +1383,10 @@ export async function deleteTicketLink(
     badRequest("Employees cannot remove ticket links");
   }
 
+  const ticket = await loadTicket(client, tenantId, ticketId);
+  if (!ticket) notFound();
+  await assertCanRead(client, ticket, userId, role);
+
   const link = await client.query<{ id: string; source_ticket_id: string; target_ticket_id: string; link_type: string }>(
     `select id, source_ticket_id, target_ticket_id, link_type
      from ticket_links
@@ -1343,6 +1396,12 @@ export async function deleteTicketLink(
   if (!link.rows[0]) {
     notFound();
   }
+
+  const otherTicketId =
+    link.rows[0].source_ticket_id === ticketId ? link.rows[0].target_ticket_id : link.rows[0].source_ticket_id;
+  const otherTicket = await loadTicket(client, tenantId, otherTicketId);
+  if (!otherTicket) notFound();
+  await assertCanRead(client, otherTicket, userId, role);
 
   await client.query("delete from ticket_links where tenant_id = $1 and id = $2", [tenantId, linkId]);
 
@@ -1380,6 +1439,7 @@ export async function mergeTickets(
 
   const current = await loadTicket(client, tenantId, currentTicketId);
   if (!current) notFound();
+  await assertCanRead(client, current, userId, role);
 
   const other = await client.query<{
     id: string;
@@ -1399,6 +1459,11 @@ export async function mergeTickets(
   if (!otherTicket) {
     badRequest(`Ticket #${input.targetTicketNumber} not found`);
   }
+  const otherFull = await loadTicket(client, tenantId, otherTicket.id);
+  if (!otherFull) {
+    badRequest(`Ticket #${input.targetTicketNumber} not found`);
+  }
+  await assertCanRead(client, otherFull, userId, role);
 
   if (current.id === otherTicket.id) {
     badRequest("Cannot merge a ticket into itself");
@@ -1491,6 +1556,34 @@ export async function mergeTickets(
      on conflict (tenant_id, source_ticket_id, target_ticket_id, link_type) do nothing`,
     [tenantId, secondary.id, primary.id, userId],
   );
+
+  // Consolidate the secondary conversation into the primary ticket.
+  const secondaryComments = await client.query<{
+    author_id: string;
+    body: string;
+    visibility: "public" | "internal";
+    created_at: Date;
+  }>(
+    `select author_id, body, visibility, created_at
+     from ticket_comments
+     where tenant_id = $1 and ticket_id = $2
+     order by created_at`,
+    [tenantId, secondary.id],
+  );
+  for (const comment of secondaryComments.rows) {
+    await client.query(
+      `insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [
+        tenantId,
+        primary.id,
+        comment.author_id,
+        `[From #${secondary.number}] ${comment.body}`.slice(0, 20000),
+        comment.visibility,
+        comment.created_at,
+      ],
+    );
+  }
 
   const secCommentBody = `This ticket was merged into #${primary.number} ("${primary.subject}") by ${actorName}.${input.reason ? `\n\nReason: ${input.reason}` : ""}`;
   await addComment(
