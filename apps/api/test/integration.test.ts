@@ -4,6 +4,7 @@ import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { markSlaBreaches, markSlaWarnings } from "../src/domain/sla.js";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 120_000 });
 
@@ -552,6 +553,187 @@ describe("ticket lifecycle and CSAT", () => {
       },
     });
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("SLA clock stop rules", () => {
+  async function createTicket(subject: string): Promise<{ id: string; number: number | string }> {
+    const employee = await login("employee@acme.test");
+    const response = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject,
+        description: "SLA clock regression test.",
+        categoryId: fixtures.acmeCategory,
+        priorityId: fixtures.acmePriority,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    return response.json() as { id: string; number: number | string };
+  }
+
+  type SlaRow = {
+    sla_response_breached_at: Date | null;
+    sla_resolution_breached_at: Date | null;
+    sla_response_warning_at: Date | null;
+    sla_resolution_warning_at: Date | null;
+  };
+
+  async function readSla(id: string): Promise<SlaRow> {
+    const row = await admin.query<SlaRow>(
+      `select sla_response_breached_at, sla_resolution_breached_at,
+              sla_response_warning_at, sla_resolution_warning_at
+       from tickets where tenant_id = $1 and id = $2`,
+      [fixtures.acme.id, id],
+    );
+    const value = row.rows[0];
+    if (!value) throw new Error("ticket not found");
+    return value;
+  }
+
+  it("does not breach a ticket closed before its deadline", async () => {
+    const ticket = await createTicket(`Closed early ${Date.now()}`);
+    const createdAt = new Date(Date.now() - 2 * 60 * 60_000);
+    const closedAt = new Date(createdAt.getTime() + 60 * 60_000);
+    const dueAt = new Date(closedAt.getTime() + 60 * 60_000);
+    await admin.query(
+      `update tickets
+       set status_id = $2, created_at = $3, closed_at = $4, resolved_at = null,
+           first_responded_at = null,
+           sla_response_due_at = $5, sla_resolution_due_at = $5,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           sla_response_warning_at = null, sla_resolution_warning_at = null,
+           sla_paused_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $6`,
+      [fixtures.acme.id, await fixtures.acmeStatus("closed"), createdAt, closedAt, dueAt, ticket.id],
+    );
+
+    await markSlaBreaches(admin, "response");
+    await markSlaBreaches(admin, "resolution");
+
+    const sla = await readSla(ticket.id);
+    expect(sla.sla_response_breached_at).toBeNull();
+    expect(sla.sla_resolution_breached_at).toBeNull();
+  });
+
+  it("stamps a closed-late breach at the closure time", async () => {
+    const ticket = await createTicket(`Closed late ${Date.now()}`);
+    const createdAt = new Date(Date.now() - 4 * 60 * 60_000);
+    const dueAt = new Date(Date.now() - 2 * 60 * 60_000);
+    const closedAt = new Date(Date.now() - 60 * 60_000);
+    await admin.query(
+      `update tickets
+       set status_id = $2, created_at = $3, closed_at = $4, resolved_at = null,
+           first_responded_at = null,
+           sla_response_due_at = $5, sla_resolution_due_at = $5,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           sla_response_warning_at = null, sla_resolution_warning_at = null,
+           sla_paused_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $6`,
+      [fixtures.acme.id, await fixtures.acmeStatus("closed"), createdAt, closedAt, dueAt, ticket.id],
+    );
+
+    await markSlaBreaches(admin, "response");
+    await markSlaBreaches(admin, "resolution");
+
+    const sla = await readSla(ticket.id);
+    expect(sla.sla_response_breached_at).not.toBeNull();
+    expect(sla.sla_resolution_breached_at).not.toBeNull();
+    expect(Math.abs((sla.sla_response_breached_at as Date).getTime() - closedAt.getTime())).toBeLessThan(2_000);
+    expect(Math.abs((sla.sla_resolution_breached_at as Date).getTime() - closedAt.getTime())).toBeLessThan(2_000);
+  });
+
+  it("does not stamp breaches on merged or deleted tickets", async () => {
+    const primary = await createTicket(`Merge primary ${Date.now()}`);
+    const merged = await createTicket(`Merged secondary ${Date.now()}`);
+    const deleted = await createTicket(`Deleted ${Date.now()}`);
+    const createdAt = new Date(Date.now() - 4 * 60 * 60_000);
+    const dueAt = new Date(Date.now() - 2 * 60 * 60_000);
+    const closedAt = new Date(Date.now() - 60 * 60_000);
+
+    await admin.query(
+      `update tickets
+       set status_id = $2, created_at = $3, closed_at = $4, resolved_at = null,
+           first_responded_at = null,
+           sla_response_due_at = $5, sla_resolution_due_at = $5,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           sla_paused_at = null, merged_into_ticket_id = $6
+       where tenant_id = $1 and id = $7`,
+      [
+        fixtures.acme.id,
+        await fixtures.acmeStatus("closed"),
+        createdAt,
+        closedAt,
+        dueAt,
+        primary.id,
+        merged.id,
+      ],
+    );
+
+    await admin.query(
+      `update tickets
+       set created_at = $2, deleted_at = now(),
+           sla_response_due_at = $3, sla_resolution_due_at = $3,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           closed_at = null, resolved_at = null, first_responded_at = null,
+           merged_into_ticket_id = null
+       where tenant_id = $1 and id = $4`,
+      [fixtures.acme.id, createdAt, dueAt, deleted.id],
+    );
+
+    await markSlaBreaches(admin, "response");
+    await markSlaBreaches(admin, "resolution");
+
+    const mergedSla = await readSla(merged.id);
+    expect(mergedSla.sla_response_breached_at).toBeNull();
+    expect(mergedSla.sla_resolution_breached_at).toBeNull();
+    const deletedSla = await readSla(deleted.id);
+    expect(deletedSla.sla_response_breached_at).toBeNull();
+    expect(deletedSla.sla_resolution_breached_at).toBeNull();
+  });
+
+  it("suppresses warnings after closure but still warns open tickets", async () => {
+    const closed = await createTicket(`Warning closed ${Date.now()}`);
+    const open = await createTicket(`Warning open ${Date.now()}`);
+    const createdAt = new Date(Date.now() - 9 * 60 * 60_000);
+    const dueAt = new Date(Date.now() + 60 * 60_000);
+
+    await admin.query(
+      `update tickets
+       set status_id = $2, created_at = $3, closed_at = now(), resolved_at = null,
+           first_responded_at = null,
+           sla_response_due_at = $4, sla_resolution_due_at = $4,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           sla_response_warning_at = null, sla_resolution_warning_at = null,
+           sla_paused_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $5`,
+      [fixtures.acme.id, await fixtures.acmeStatus("closed"), createdAt, dueAt, closed.id],
+    );
+
+    await admin.query(
+      `update tickets
+       set created_at = $2, closed_at = null, resolved_at = null,
+           first_responded_at = null, assignee_id = null, team_id = null,
+           sla_response_due_at = $3, sla_resolution_due_at = $3,
+           sla_response_breached_at = null, sla_resolution_breached_at = null,
+           sla_response_warning_at = null, sla_resolution_warning_at = null,
+           sla_paused_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $4`,
+      [fixtures.acme.id, createdAt, dueAt, open.id],
+    );
+
+    await markSlaWarnings(admin, "resolution");
+    await markSlaWarnings(admin, "response");
+
+    const closedSla = await readSla(closed.id);
+    expect(closedSla.sla_resolution_warning_at).toBeNull();
+    expect(closedSla.sla_response_warning_at).toBeNull();
+
+    const openSla = await readSla(open.id);
+    expect(openSla.sla_resolution_warning_at).not.toBeNull();
+    expect(openSla.sla_response_warning_at).not.toBeNull();
   });
 });
 

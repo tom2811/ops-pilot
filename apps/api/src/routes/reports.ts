@@ -46,9 +46,9 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
            select count(*)::int as total,
                   count(*) filter (where stage not in ('resolved', 'closed'))::int as open,
                   count(*) filter (where stage not in ('resolved', 'closed') and assignee_id is null)::int as unassigned,
-                  count(*) filter (where sla_response_breached_at is not null or sla_resolution_breached_at is not null)::int as sla_breached,
-                  case when count(*) filter (where sla_policy_id is not null) > 0
-                       then round((count(*) filter (where sla_policy_id is not null and sla_response_breached_at is null and sla_resolution_breached_at is null)::numeric * 100.0) / count(*) filter (where sla_policy_id is not null), 1)
+                  count(*) filter (where (sla_response_breached_at is not null or sla_resolution_breached_at is not null) and merged_into_ticket_id is null)::int as sla_breached,
+                  case when count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null) > 0
+                       then round((count(*) filter (where sla_policy_id is not null and sla_response_breached_at is null and sla_resolution_breached_at is null and merged_into_ticket_id is null)::numeric * 100.0) / count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null), 1)
                        else 100.0
                   end::float as sla_compliance_percent,
                   count(*) filter (where resolved_at >= now() - interval '7 days')::int as resolved_week,
