@@ -78,7 +78,7 @@ type TimelineEvent = {
   title: string;
   detail?: string;
   actor?: string;
-  kind: "status" | "assignment" | "audit";
+  kind: "status" | "assignment" | "audit" | "danger" | "warning";
 };
 
 export function TicketDetailPage() {
@@ -214,24 +214,58 @@ export function TicketDetailPage() {
     ...detail.updates
       .filter((event) => {
         if (event.action === "ticket.merged") {
-          const after = event.after as { mergedTicketNumber?: number; mergedIntoTicketNumber?: number } | undefined;
-          return Boolean(after?.mergedTicketNumber);
+          const after = event.after as {
+            secondaryTicketNumber?: number;
+            mergedIntoTicketNumber?: number;
+            mergedTicketNumber?: number;
+          } | undefined;
+          return Boolean(after?.secondaryTicketNumber || after?.mergedIntoTicketNumber || after?.mergedTicketNumber);
         }
         return true;
       })
       .map((event) => {
         let title = "Ticket details updated";
         let detailText: string | undefined;
+        let kind: TimelineEvent["kind"] = "audit";
 
         if (event.action === "ticket.sla_response_breached") {
           title = "Response SLA breached";
+          kind = "danger";
         } else if (event.action === "ticket.sla_resolution_breached") {
           title = "Resolution SLA breached";
+          kind = "danger";
+        } else if (event.action === "ticket.sla_response_warning") {
+          title = "Response SLA warning";
+          detailText = "Approaching breach threshold (80% time elapsed)";
+          kind = "warning";
+        } else if (event.action === "ticket.sla_resolution_warning") {
+          title = "Resolution SLA warning";
+          detailText = "Approaching breach threshold (80% time elapsed)";
+          kind = "warning";
+        } else if (event.action === "ticket.sla_escalated") {
+          const after = event.after as { kind?: string; threshold?: number } | undefined;
+          title = `SLA escalation triggered (${after?.kind ?? "resolution"} at ${after?.threshold ?? 100}%)`;
+          detailText = "Escalation notification dispatched";
+          kind = "warning";
         } else if (event.action === "ticket.merged") {
-          const after = event.after as { mergedTicketNumber?: number } | undefined;
-          title = after?.mergedTicketNumber
-            ? `Merged ticket #${after.mergedTicketNumber} into this ticket`
-            : "Ticket merged";
+          const after = event.after as {
+            secondaryTicketNumber?: number;
+            mergedIntoTicketNumber?: number;
+            mergedTicketNumber?: number;
+            reason?: string;
+          } | undefined;
+          if (after?.secondaryTicketNumber) {
+            title = `Merged ticket #${after.secondaryTicketNumber} into this ticket`;
+          } else if (after?.mergedIntoTicketNumber) {
+            title = `Merged into ticket #${after.mergedIntoTicketNumber}`;
+          } else if (after?.mergedTicketNumber) {
+            title = `Merged ticket #${after.mergedTicketNumber} into this ticket`;
+          } else {
+            title = "Ticket merged";
+          }
+          if (after?.reason) {
+            detailText = `Reason: ${after.reason}`;
+          }
         } else if (event.action === "ticket.link_created") {
           const after = event.after as { targetTicketNumber?: number; linkType?: TicketLinkType } | undefined;
           title = after?.targetTicketNumber
@@ -267,7 +301,7 @@ export function TicketDetailPage() {
           title,
           detail: detailText,
           actor: event.actor_name ?? humanize(event.actor_role),
-          kind: "audit" as const,
+          kind,
         };
       }),
   ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
@@ -348,17 +382,31 @@ export function TicketDetailPage() {
     setCommentBody((current) => (current ? `${current}\n\n${text}` : text));
   }
 
-  async function submitComment(event: FormEvent): Promise<void> {
-    event.preventDefault();
+  async function submitComment(countsAsFirstResponse = false): Promise<void> {
     setBusy(true);
     setError(null);
     try {
       await post(`/t/${tenantSlug}/tickets/${ticketId}/comments`, {
         body: commentBody,
         visibility: internal ? "internal" : "public",
+        countsAsFirstResponse: !internal && countsAsFirstResponse,
       });
       setCommentBody("");
       await reload("Comment added.");
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claim(): Promise<void> {
+    if (!detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/t/${tenantSlug}/tickets/${ticketId}/claim`, { expectedVersion: detail.version });
+      await reload("Ticket claimed.");
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -722,7 +770,12 @@ export function TicketDetailPage() {
 
           <section className="card">
             <div className="section-heading">
-              <h2>Request</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <h2>Request</h2>
+                <span className="badge subtle" style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
+                  Intake: via Email (support@{tenantSlug}.opspilot.dev)
+                </span>
+              </div>
               <span className="muted small">Updated {formatDate(detail.updated_at)}</span>
             </div>
             <p className="prose">{detail.description}</p>
@@ -750,7 +803,7 @@ export function TicketDetailPage() {
             )}
             {detail.pending_reason && (
               <div className="callout warning">
-                <strong>Waiting on</strong>
+                <strong>{detail.status_label === "Waiting on vendor" ? "Waiting on vendor" : "Waiting on"}</strong>
                 <p>{detail.pending_reason}</p>
               </div>
             )}
@@ -930,20 +983,39 @@ export function TicketDetailPage() {
               <EmptyState title="No comments yet">Start the conversation below.</EmptyState>
             ) : (
               <div className="comments">
-                {detail.comments.map((comment) => (
-                  <article key={comment.id} className={`comment ${comment.visibility}`}>
-                    <header>
-                      <strong>{comment.author_name}</strong>
-                      {comment.visibility === "internal" && <span className="internal-tag">internal</span>}
-                      <span className="muted small">{formatDate(comment.created_at)}</span>
-                    </header>
-                    <p>{comment.body}</p>
-                  </article>
-                ))}
+                {detail.comments.map((comment) => {
+                  const isRequester = comment.author_name === detail.requester_name;
+                  return (
+                    <article key={comment.id} className={`comment ${comment.visibility}`}>
+                      <header>
+                        <strong>{comment.author_name}</strong>
+                        {comment.visibility === "internal" ? (
+                          <span className="internal-tag">internal</span>
+                        ) : isRequester ? (
+                          <span className="badge subtle" style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
+                            via Email
+                          </span>
+                        ) : (
+                          <span className="badge subtle" style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
+                            Dispatched via SMTP
+                          </span>
+                        )}
+                        <span className="muted small">{formatDate(comment.created_at)}</span>
+                      </header>
+                      <p>{comment.body}</p>
+                    </article>
+                  );
+                })}
               </div>
             )}
 
-            <form className="comment-form" onSubmit={(event) => void submitComment(event)}>
+            <form
+              className="comment-form"
+              onSubmit={(event: FormEvent) => {
+                event.preventDefault();
+                void submitComment(false);
+              }}
+            >
               {canAgent && (config?.canned_responses?.length ?? 0) > 0 && (
                 <div className="canned-response-picker">
                   <Select
@@ -965,16 +1037,41 @@ export function TicketDetailPage() {
                 onChange={(event) => setCommentBody(event.target.value)}
                 required
               />
-              <div className="form-footer">
-                {canAgent && (
-                  <label className="check-row">
-                    <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} />
-                    Internal note
-                  </label>
-                )}
-                <button className="button" disabled={busy} type="submit">
-                  {busy ? "Sending…" : "Send"}
-                </button>
+              <div className="form-footer" style={{ flexDirection: "column", alignItems: "stretch", gap: "8px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  {canAgent ? (
+                    <label className="check-row">
+                      <input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} />
+                      Internal note
+                    </label>
+                  ) : <span />}
+                  {canAgent && !internal && !detail.first_responded_at ? (
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button className="button ghost" disabled={busy} type="submit">
+                        {busy ? "Sending…" : "Send acknowledgement"}
+                      </button>
+                      <button
+                        className="button"
+                        disabled={busy}
+                        type="button"
+                        onClick={() => void submitComment(true)}
+                      >
+                        Send first response
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="button" disabled={busy} type="submit">
+                      {busy ? "Sending…" : internal ? "Add internal note" : "Submit public reply"}
+                    </button>
+                  )}
+                </div>
+                <div className="muted small" style={{ fontSize: "0.78rem" }}>
+                  {internal
+                    ? "Private note: Visible only to agents and staff. No email notification sent."
+                    : canAgent && !detail.first_responded_at
+                      ? `Acknowledgement does not stop the response SLA. First response emails ${detail.requester_name} and stops the clock.`
+                      : `Public reply: Will be dispatched via SMTP to ${detail.requester_name}.`}
+                </div>
               </div>
             </form>
           </section>
@@ -1012,6 +1109,14 @@ export function TicketDetailPage() {
                 <dt>Requester</dt>
                 <dd>{detail.requester_name}</dd>
               </div>
+              {detail.participants && detail.participants.length > 0 && (
+                <div>
+                  <dt>Participants</dt>
+                  <dd>
+                    {detail.participants.map((p) => p.display_name).join(", ")}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Assignee</dt>
                 <dd>{detail.assignee_name ?? "Unassigned"}</dd>
@@ -1066,6 +1171,11 @@ export function TicketDetailPage() {
           {canAgent && (
             <section className="card">
               <h2>Assignment</h2>
+              {!detail.assignee_id && detail.team_id && (
+                <button className="button" disabled={busy} type="button" onClick={() => void claim()}>
+                  Claim
+                </button>
+              )}
               <form className="stack" onSubmit={(event) => void submitAssignment(event)}>
                 <label>
                   Team

@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { businessMinutesBetween } from "@opspilot/core";
 import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
+import { getBusinessHoursConfig } from "../domain/tickets.js";
 
 const querySchema = z.object({
   days: z.coerce.number().int().min(7).max(365).default(30),
@@ -34,29 +36,49 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
                 select 1 from team_members tm
                 where tm.tenant_id = t.tenant_id and tm.user_id = $3 and tm.team_id = t.team_id
               )
-              or (t.assignee_id is null and t.team_id is null)
             ))
           )
       )`;
       const params = [tenantId, role, userId];
+      const bhConfig = await getBusinessHoursConfig(client, tenantId);
 
-      const [summary, byStatus, byPriority, byTeam, byCategory, trend, csat, recentFeedback] = await Promise.all([
+      const [summary, byStatus, byPriority, byTeam, byCategory, trend, csat, recentFeedback, durationRows] = await Promise.all([
         client.query(
           `${visibleCte}
            select count(*)::int as total,
                   count(*) filter (where stage not in ('resolved', 'closed'))::int as open,
                   count(*) filter (where stage not in ('resolved', 'closed') and assignee_id is null)::int as unassigned,
                   count(*) filter (where (sla_response_breached_at is not null or sla_resolution_breached_at is not null) and merged_into_ticket_id is null)::int as sla_breached,
-                  case when count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null) > 0
-                       then round((count(*) filter (where sla_policy_id is not null and sla_response_breached_at is null and sla_resolution_breached_at is null and merged_into_ticket_id is null)::numeric * 100.0) / count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null), 1)
-                       else 100.0
+                  count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                    and created_at >= now() - ($4::int || ' days')::interval
+                    and (sla_response_breached_at is not null or sla_resolution_breached_at is not null))::int as sla_period_breached,
+                  count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                    and created_at >= now() - ($4::int || ' days')::interval
+                    and sla_response_breached_at is null and sla_resolution_breached_at is null
+                    and (resolved_at is not null or closed_at is not null))::int as sla_met,
+                  count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                    and created_at >= now() - ($4::int || ' days')::interval
+                    and sla_response_breached_at is null and sla_resolution_breached_at is null
+                    and resolved_at is null and closed_at is null)::int as sla_still_running,
+                  case when (
+                    count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                      and created_at >= now() - ($4::int || ' days')::interval
+                      and (sla_response_breached_at is not null or sla_resolution_breached_at is not null or resolved_at is not null or closed_at is not null))
+                  ) > 0
+                  then round(
+                    (count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                      and created_at >= now() - ($4::int || ' days')::interval
+                      and sla_response_breached_at is null and sla_resolution_breached_at is null
+                      and (resolved_at is not null or closed_at is not null))::numeric * 100.0) /
+                    count(*) filter (where sla_policy_id is not null and merged_into_ticket_id is null
+                      and created_at >= now() - ($4::int || ' days')::interval
+                      and (sla_response_breached_at is not null or sla_resolution_breached_at is not null or resolved_at is not null or closed_at is not null)),
+                    1
+                  )
+                  else 100.0
                   end::float as sla_compliance_percent,
                   count(*) filter (where resolved_at >= now() - interval '7 days')::int as resolved_week,
-                  count(*) filter (where created_at >= now() - ($4::int || ' days')::interval)::int as created_period,
-                  coalesce(avg(extract(epoch from (resolved_at - created_at)) / 3600)
-                    filter (where resolved_at is not null and resolved_at >= now() - ($4::int || ' days')::interval), 0)::float as avg_resolution_hours,
-                  coalesce(avg(extract(epoch from (first_responded_at - created_at)) / 60)
-                    filter (where first_responded_at is not null and first_responded_at >= now() - ($4::int || ' days')::interval), 0)::float as avg_response_minutes
+                  count(*) filter (where created_at >= now() - ($4::int || ' days')::interval)::int as created_period
            from visible`,
           [...params, days],
         ),
@@ -133,13 +155,57 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
            limit 5`,
           params,
         ),
+        client.query<{
+          id: string;
+          created_at: Date;
+          resolved_at: Date | null;
+          first_responded_at: Date | null;
+          business_hours_only: boolean;
+        }>(
+          `${visibleCte}
+           select v.id, v.created_at, v.resolved_at, v.first_responded_at,
+                  coalesce(p.business_hours_only, false) as business_hours_only
+           from visible v
+           left join sla_policies p on p.tenant_id = $1 and p.id = v.sla_policy_id
+           where (v.resolved_at is not null and v.resolved_at >= now() - ($4::int || ' days')::interval)
+              or (v.first_responded_at is not null and v.first_responded_at >= now() - ($4::int || ' days')::interval)`,
+          [...params, days],
+        ),
       ]);
+
+      let totalResolutionMinutes = 0;
+      let resolvedCount = 0;
+      let totalResponseMinutes = 0;
+      let responseCount = 0;
+
+      for (const row of durationRows.rows) {
+        if (row.resolved_at) {
+          const resMinutes = row.business_hours_only
+            ? businessMinutesBetween(new Date(row.created_at), new Date(row.resolved_at), bhConfig)
+            : Math.max(0, (new Date(row.resolved_at).getTime() - new Date(row.created_at).getTime()) / 60000);
+          totalResolutionMinutes += resMinutes;
+          resolvedCount += 1;
+        }
+        if (row.first_responded_at) {
+          const respMinutes = row.business_hours_only
+            ? businessMinutesBetween(new Date(row.created_at), new Date(row.first_responded_at), bhConfig)
+            : Math.max(0, (new Date(row.first_responded_at).getTime() - new Date(row.created_at).getTime()) / 60000);
+          totalResponseMinutes += respMinutes;
+          responseCount += 1;
+        }
+      }
+
+      const avgResolutionHours = resolvedCount > 0 ? Number((totalResolutionMinutes / resolvedCount / 60).toFixed(1)) : 0;
+      const avgResponseMinutes = responseCount > 0 ? Number((totalResponseMinutes / responseCount).toFixed(1)) : 0;
 
       const defaultSummary = {
         total: 0,
         open: 0,
         unassigned: 0,
         sla_breached: 0,
+        sla_period_breached: 0,
+        sla_met: 0,
+        sla_still_running: 0,
         sla_compliance_percent: 100,
         resolved_week: 0,
         created_period: 0,
@@ -151,12 +217,14 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         total: Number(rawSummary.total ?? 0),
         open: Number(rawSummary.open ?? 0),
         unassigned: Number(rawSummary.unassigned ?? 0),
-        sla_breached: Number(rawSummary.sla_breached ?? 0),
+        sla_breached: Number(rawSummary.sla_period_breached ?? rawSummary.sla_breached ?? 0),
+        sla_met: Number(rawSummary.sla_met ?? 0),
+        sla_still_running: Number(rawSummary.sla_still_running ?? 0),
         sla_compliance_percent: Number(rawSummary.sla_compliance_percent ?? 100),
         resolved_week: Number(rawSummary.resolved_week ?? 0),
         created_period: Number(rawSummary.created_period ?? 0),
-        avg_resolution_hours: Number(rawSummary.avg_resolution_hours ?? 0),
-        avg_response_minutes: Number(rawSummary.avg_response_minutes ?? 0),
+        avg_resolution_hours: avgResolutionHours,
+        avg_response_minutes: avgResponseMinutes,
       };
 
       return {

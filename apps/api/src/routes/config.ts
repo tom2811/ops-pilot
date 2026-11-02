@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   cannedResponseInputSchema,
   cannedResponseUpdateSchema,
+  escalationPolicyInputSchema,
+  escalationPolicyUpdateSchema,
   routingConditionsSchema,
   slaPolicyInputSchema,
   tenantSettingsInputSchema,
@@ -19,11 +21,16 @@ const slug = z
   .max(50)
   .regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowercase letters, numbers and dashes");
 
-const teamInput = z.object({ slug, name: z.string().trim().min(1).max(100) });
+const teamInput = z.object({
+  slug,
+  name: z.string().trim().min(1).max(100),
+  leadUserId: z.string().uuid().nullable().optional(),
+});
 const categoryInput = z.object({
   slug,
   name: z.string().trim().min(1).max(100),
   defaultTeamId: z.string().uuid().nullable().optional(),
+  defaultPriorityId: z.string().uuid().nullable().optional(),
 });
 const priorityInput = z.object({
   key: z
@@ -65,6 +72,7 @@ const priorityUpdate = priorityInput.partial();
 const customFieldUpdate = customFieldInput.partial();
 const routingRuleUpdate = routingRuleInput.partial();
 const slaPolicyUpdate = slaPolicyInputSchema.partial();
+const escalationPolicyUpdate = escalationPolicyUpdateSchema;
 
 function tenantContext(req: {
   authUser?: { id: string };
@@ -82,11 +90,11 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const { userId, tenantId, role } = tenantContext(req);
     return withTenant(tenantId, userId, async (client) => {
       const teams = await client.query(
-        "select id, slug, name from teams where tenant_id = $1 and is_active order by name",
+        "select id, slug, name, lead_user_id from teams where tenant_id = $1 and is_active order by name",
         [tenantId],
       );
       const categories = await client.query(
-        `select id, slug, name, default_team_id from categories
+        `select id, slug, name, default_team_id, default_priority_id from categories
          where tenant_id = $1 and is_active order by name`,
         [tenantId],
       );
@@ -95,7 +103,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         [tenantId],
       );
       const statuses = await client.query(
-        "select id, key, label, stage, sort_order from ticket_statuses where tenant_id = $1 and is_active order by sort_order",
+        "select id, key, label, stage, sort_order, pauses_sla from ticket_statuses where tenant_id = $1 and is_active order by sort_order",
         [tenantId],
       );
       const customFields = await client.query(
@@ -131,6 +139,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         "select timezone, ticket_prefix, reopen_window_days, auto_close_days, branding, config_version, business_hours_start, business_hours_end, business_days from tenant_settings where tenant_id = $1",
         [tenantId],
       );
+      const holidays =
+        role === "employee"
+          ? { rows: [] }
+          : await client.query(
+              "select to_char(holiday_on, 'YYYY-MM-DD') as holiday_on, name from tenant_holidays where tenant_id = $1 order by holiday_on",
+              [tenantId],
+            );
       const slaPolicies =
         role === "employee"
           ? { rows: [] }
@@ -149,6 +164,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
                order by title`,
               [tenantId],
             );
+      const escalationPolicies =
+        role === "employee"
+          ? { rows: [] }
+          : await client.query(
+              `select id, name, sla_kind, threshold_percent, target_type, target_team_id, is_active
+               from escalation_policies where tenant_id = $1 and is_active
+               order by name`,
+              [tenantId],
+            );
 
       return {
         teams: teams.rows,
@@ -159,9 +183,56 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         routing_rules: routingRules.rows,
         agents: agents.rows,
         settings: settings.rows[0] ?? null,
+        holidays: holidays.rows,
         sla_policies: slaPolicies.rows,
         canned_responses: cannedResponses.rows,
+        escalation_policies: escalationPolicies.rows,
       };
+    });
+  });
+
+  const holidayInput = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    name: z.string().trim().min(1).max(120),
+  });
+
+  app.post("/t/:tenantSlug/holidays", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const input = holidayInput.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const saved = await client.query(
+        `insert into tenant_holidays (tenant_id, holiday_on, name)
+         values ($1, $2::date, $3)
+         on conflict (tenant_id, holiday_on) do update set name = excluded.name
+         returning to_char(holiday_on, 'YYYY-MM-DD') as holiday_on, name`,
+        [tenantId, input.date, input.name],
+      );
+      await writeAudit(client, tenantId, { id: userId, role }, "holiday.saved", "tenant_holiday", tenantId, null, input, req.correlationId);
+      return saved.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/holidays/:date", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse((req.params as { date: string }).date);
+    return withTenant(tenantId, userId, async (client) => {
+      const removed = await client.query(
+        "delete from tenant_holidays where tenant_id = $1 and holiday_on = $2::date",
+        [tenantId, date],
+      );
+      if ((removed.rowCount ?? 0) === 0) notFound();
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "holiday.deleted",
+        "tenant_holiday",
+        tenantId,
+        { date },
+        null,
+        req.correlationId,
+      );
+      return reply.code(204).send();
     });
   });
 
@@ -194,9 +265,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const input = categoryInput.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
       const result = await client.query(
-        `insert into categories (tenant_id, slug, name, default_team_id)
-         values ($1, $2, $3, $4) returning id, slug, name, default_team_id`,
-        [tenantId, input.slug, input.name, input.defaultTeamId ?? null],
+        `insert into categories (tenant_id, slug, name, default_team_id, default_priority_id)
+         values ($1, $2, $3, $4, $5) returning id, slug, name, default_team_id, default_priority_id`,
+        [tenantId, input.slug, input.name, input.defaultTeamId ?? null, input.defaultPriorityId ?? null],
       );
       const category = result.rows[0];
       await writeAudit(
@@ -207,7 +278,12 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         "category",
         category.id,
         null,
-        { slug: input.slug, name: input.name, defaultTeamId: input.defaultTeamId ?? null },
+        {
+          slug: input.slug,
+          name: input.name,
+          defaultTeamId: input.defaultTeamId ?? null,
+          defaultPriorityId: input.defaultPriorityId ?? null,
+        },
         req.correlationId,
       );
       return category;
@@ -345,9 +421,17 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const input = teamUpdate.parse(req.body);
     return withTenant(tenantId, userId, async (client) => {
       const result = await client.query(
-        `update teams set slug = coalesce($3, slug), name = coalesce($4, name)
-         where tenant_id = $1 and id = $2 returning id, slug, name`,
-        [tenantId, id, input.slug ?? null, input.name ?? null],
+        `update teams set slug = coalesce($3, slug), name = coalesce($4, name),
+                lead_user_id = case when $5 then $6 else lead_user_id end
+         where tenant_id = $1 and id = $2 returning id, slug, name, lead_user_id`,
+        [
+          tenantId,
+          id,
+          input.slug ?? null,
+          input.name ?? null,
+          Object.hasOwn(input, "leadUserId"),
+          input.leadUserId ?? null,
+        ],
       );
       if (!result.rows[0]) notFound("Team not found");
       await writeAudit(client, tenantId, { id: userId, role }, "config.team_updated", "team", id, null, input, req.correlationId);
@@ -366,6 +450,33 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
+  app.patch("/t/:tenantSlug/statuses/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = z.object({ pausesSla: z.boolean() }).parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update ticket_statuses set pauses_sla = $3
+         where tenant_id = $1 and id = $2
+         returning id, key, label, stage, sort_order, pauses_sla`,
+        [tenantId, id, input.pausesSla],
+      );
+      if (!result.rows[0]) notFound("Status not found");
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.status_updated",
+        "ticket_status",
+        id,
+        null,
+        input,
+        req.correlationId,
+      );
+      return result.rows[0];
+    });
+  });
+
   app.patch("/t/:tenantSlug/categories/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
     const { userId, tenantId, role } = tenantContext(req);
     const { id } = entityParams.parse(req.params);
@@ -373,9 +484,10 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     return withTenant(tenantId, userId, async (client) => {
       const result = await client.query(
         `update categories set slug = coalesce($3, slug), name = coalesce($4, name),
-                default_team_id = case when $5 then $6 else default_team_id end
+                default_team_id = case when $5 then $6 else default_team_id end,
+                default_priority_id = case when $7 then $8 else default_priority_id end
          where tenant_id = $1 and id = $2
-         returning id, slug, name, default_team_id`,
+         returning id, slug, name, default_team_id, default_priority_id`,
         [
           tenantId,
           id,
@@ -383,6 +495,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           input.name ?? null,
           Object.hasOwn(input, "defaultTeamId"),
           input.defaultTeamId ?? null,
+          Object.hasOwn(input, "defaultPriorityId"),
+          input.defaultPriorityId ?? null,
         ],
       );
       if (!result.rows[0]) notFound("Category not found");
@@ -554,6 +668,105 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       await writeAudit(client, tenantId, { id: userId, role }, "config.sla_policy_updated", "sla_policy", id, null, input, req.correlationId);
       return result.rows[0];
     });
+  });
+
+  app.post("/t/:tenantSlug/escalation-policies", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const input = escalationPolicyInputSchema.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `insert into escalation_policies
+          (tenant_id, name, sla_kind, threshold_percent, target_type, target_team_id)
+         values ($1, $2, $3, $4, $5, $6)
+         returning id, name, sla_kind, threshold_percent, target_type, target_team_id, is_active`,
+        [
+          tenantId,
+          input.name,
+          input.slaKind,
+          input.thresholdPercent,
+          input.targetType,
+          input.targetTeamId ?? null,
+        ],
+      );
+      const policy = result.rows[0];
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.escalation_policy_created",
+        "escalation_policy",
+        policy.id,
+        null,
+        input,
+        req.correlationId,
+      );
+      return policy;
+    });
+  });
+
+  app.patch("/t/:tenantSlug/escalation-policies/:id", { preHandler: requirePermission("config.manage") }, async (req) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    const input = escalationPolicyUpdate.parse(req.body);
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        `update escalation_policies set
+           name = coalesce($3, name),
+           sla_kind = coalesce($4, sla_kind),
+           threshold_percent = coalesce($5, threshold_percent),
+           target_type = coalesce($6, target_type),
+           target_team_id = case when $7 then $8 else target_team_id end
+         where tenant_id = $1 and id = $2
+         returning id, name, sla_kind, threshold_percent, target_type, target_team_id, is_active`,
+        [
+          tenantId,
+          id,
+          input.name ?? null,
+          input.slaKind ?? null,
+          input.thresholdPercent ?? null,
+          input.targetType ?? null,
+          Object.hasOwn(input, "targetTeamId") || Boolean(input.targetType),
+          input.targetType && input.targetType !== "team" ? null : (input.targetTeamId ?? null),
+        ],
+      );
+      if (!result.rows[0]) notFound("Escalation policy not found");
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.escalation_policy_updated",
+        "escalation_policy",
+        id,
+        null,
+        input,
+        req.correlationId,
+      );
+      return result.rows[0];
+    });
+  });
+
+  app.delete("/t/:tenantSlug/escalation-policies/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {
+    const { userId, tenantId, role } = tenantContext(req);
+    const { id } = entityParams.parse(req.params);
+    await withTenant(tenantId, userId, async (client) => {
+      const result = await client.query(
+        "update escalation_policies set is_active = false where tenant_id = $1 and id = $2",
+        [tenantId, id],
+      );
+      if ((result.rowCount ?? 0) === 0) notFound("Escalation policy not found");
+      await writeAudit(
+        client,
+        tenantId,
+        { id: userId, role },
+        "config.escalation_policy_deactivated",
+        "escalation_policy",
+        id,
+        null,
+        null,
+        req.correlationId,
+      );
+    });
+    return reply.status(204).send();
   });
 
   app.delete("/t/:tenantSlug/sla-policies/:id", { preHandler: requirePermission("config.manage") }, async (req, reply) => {

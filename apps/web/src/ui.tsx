@@ -24,6 +24,12 @@ const ICONS = {
     </>
   ),
   reports: <path d="M4 19V10M9.5 19V5M15 19v-5M20 19v-8" />,
+  email: (
+    <>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+      <path d="m4 7 8 6 8-6" />
+    </>
+  ),
   people: (
     <>
       <circle cx="9" cy="8" r="3.2" />

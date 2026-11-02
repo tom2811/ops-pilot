@@ -4,7 +4,8 @@ import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { markSlaBreaches, markSlaWarnings } from "../src/domain/sla.js";
+import { hashPassword } from "@opspilot/core/password";
+import { applyEscalations, markSlaBreaches, markSlaWarnings } from "../src/domain/sla.js";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 120_000 });
 
@@ -207,11 +208,11 @@ describe("authentication and tenant isolation", () => {
   });
 
   it("does not let one tenant address another tenant's routes", async () => {
-    const acmeAdmin = await login("admin@acme.test");
+    const acmeEmployee = await login("employee@acme.test");
     const globexAdmin = await login("admin@globex.test");
 
-    expect((await inject(acmeAdmin, { method: "GET", url: "/api/t/globex/tickets" })).statusCode).toBe(404);
-    expect((await inject(acmeAdmin, { method: "GET", url: "/api/t/globex/users" })).statusCode).toBe(404);
+    expect((await inject(acmeEmployee, { method: "GET", url: "/api/t/globex/tickets" })).statusCode).toBe(404);
+    expect((await inject(acmeEmployee, { method: "GET", url: "/api/t/globex/users" })).statusCode).toBe(404);
     expect((await inject(globexAdmin, { method: "GET", url: "/api/t/acme/tickets" })).statusCode).toBe(404);
   });
 
@@ -423,9 +424,20 @@ describe("ticket lifecycle and CSAT", () => {
       },
     });
     expect(created.statusCode, created.body).toBe(200);
-    const ticket = created.json() as { id: string; number: number | string; version: number; status_stage: string };
+    const ticket = created.json() as {
+      id: string;
+      number: number | string;
+      version: number;
+      status_stage: string;
+      team_id: string | null;
+    };
     expect(ticket.status_stage).toBe("new");
     expect(Number(ticket.number)).toBeGreaterThan(0);
+    const routedTeam = await admin.query<{ default_team_id: string }>(
+      "select default_team_id from categories where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, fixtures.acmeCategory],
+    );
+    expect(ticket.team_id).toBe(routedTeam.rows[0]?.default_team_id);
 
     const stale = await inject(employee, {
       method: "PATCH",
@@ -536,6 +548,41 @@ describe("ticket lifecycle and CSAT", () => {
     expect(unknown.json().error).toBe("Feedback link not found");
   });
 
+  it("claims an unassigned ticket once", async () => {
+    const employee = await login("employee@acme.test");
+    const adminCookie = await login("admin@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Claim once ${Date.now()}`,
+        description: "Needs an owner.",
+        categoryId: fixtures.acmeCategory,
+        priorityId: fixtures.acmePriority,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticket = created.json() as { id: string; version: number; team_id: string | null };
+    expect(ticket.team_id).toBeTruthy();
+
+    const claimed = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${ticket.id}/claim`,
+      payload: { expectedVersion: ticket.version },
+    });
+    expect(claimed.statusCode, claimed.body).toBe(200);
+    expect(claimed.json().assignee_id).toBeTruthy();
+    expect(claimed.json().status_stage).toBe("open");
+
+    const again = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${ticket.id}/claim`,
+      payload: { expectedVersion: claimed.json().version },
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
   it("rejects a category from another tenant", async () => {
     const employee = await login("employee@acme.test");
     const foreignCategory = await admin.query<{ id: string }>(
@@ -553,6 +600,39 @@ describe("ticket lifecycle and CSAT", () => {
       },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it("does not let an employee set an arbitrary priority on create", async () => {
+    const employee = await login("employee@acme.test");
+    const category = await admin.query<{ id: string; default_priority_id: string }>(
+      "select id, default_priority_id from categories where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, fixtures.acmeCategory],
+    );
+    const otherPriority = await admin.query<{ id: string }>(
+      `select id from priorities
+       where tenant_id = $1 and id <> $2
+       order by rank
+       limit 1`,
+      [fixtures.acme.id, category.rows[0]?.default_priority_id],
+    );
+    expect(category.rows[0]?.default_priority_id).toBeTruthy();
+    expect(otherPriority.rows[0]?.id).toBeTruthy();
+    expect(otherPriority.rows[0]?.id).not.toBe(category.rows[0]?.default_priority_id);
+
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Employee priority ${Date.now()}`,
+        description: "Should use the category default, not the requested priority.",
+        categoryId: fixtures.acmeCategory,
+        priorityId: otherPriority.rows[0]?.id,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    expect(created.json().priority_id).toBe(category.rows[0]?.default_priority_id);
+    expect(created.json().priority_id).not.toBe(otherPriority.rows[0]?.id);
   });
 });
 
@@ -705,6 +785,7 @@ describe("SLA clock stop rules", () => {
        set status_id = $2, created_at = $3, closed_at = now(), resolved_at = null,
            first_responded_at = null,
            sla_response_due_at = $4, sla_resolution_due_at = $4,
+           sla_response_warn_due_at = null, sla_resolution_warn_due_at = null,
            sla_response_breached_at = null, sla_resolution_breached_at = null,
            sla_response_warning_at = null, sla_resolution_warning_at = null,
            sla_paused_at = null, merged_into_ticket_id = null
@@ -717,6 +798,7 @@ describe("SLA clock stop rules", () => {
        set created_at = $2, closed_at = null, resolved_at = null,
            first_responded_at = null, assignee_id = null, team_id = null,
            sla_response_due_at = $3, sla_resolution_due_at = $3,
+           sla_response_warn_due_at = null, sla_resolution_warn_due_at = null,
            sla_response_breached_at = null, sla_resolution_breached_at = null,
            sla_response_warning_at = null, sla_resolution_warning_at = null,
            sla_paused_at = null, merged_into_ticket_id = null
@@ -734,6 +816,266 @@ describe("SLA clock stop rules", () => {
     const openSla = await readSla(open.id);
     expect(openSla.sla_resolution_warning_at).not.toBeNull();
     expect(openSla.sla_response_warning_at).not.toBeNull();
+  });
+});
+
+describe("SLA pause flag", () => {
+  async function openTicket(): Promise<{ id: string; version: number }> {
+    const employee = await login("employee@acme.test");
+    const adminCookie = await login("admin@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Pause flag ${Date.now()}`,
+        description: "Pending pause flag coverage.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const assigned = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${created.json().id}/assign`,
+      payload: {
+        teamId: fixtures.acmeTeam,
+        assigneeId: fixtures.acmeAgentId,
+        expectedVersion: created.json().version,
+      },
+    });
+    expect(assigned.statusCode, assigned.body).toBe(200);
+    return assigned.json() as { id: string; version: number };
+  }
+
+  it("pauses for waiting on customer and keeps the clock running for waiting on vendor", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const customer = await openTicket();
+    const customerStatus = await fixtures.acmeStatus("pending");
+    const paused = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${customer.id}/transitions`,
+      payload: {
+        toStatusId: customerStatus,
+        expectedVersion: customer.version,
+        reason: "Need more detail from the requester.",
+      },
+    });
+    expect(paused.statusCode, paused.body).toBe(200);
+    expect(paused.json().status_stage).toBe("pending");
+    expect(paused.json().sla_paused_at).toBeTruthy();
+
+    const vendor = await openTicket();
+    const vendorStatus = await fixtures.acmeStatus("waiting_on_vendor");
+    const running = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${vendor.id}/transitions`,
+      payload: {
+        toStatusId: vendorStatus,
+        expectedVersion: vendor.version,
+        reason: "Waiting on the circuit provider.",
+      },
+    });
+    expect(running.statusCode, running.body).toBe(200);
+    expect(running.json().status_stage).toBe("pending");
+    expect(running.json().sla_paused_at).toBeNull();
+  });
+});
+
+describe("SLA escalation", () => {
+  it("pages the team lead once at the resolution breach threshold", async () => {
+    const employee = await login("employee@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Escalate lead ${Date.now()}`,
+        description: "Needs a page at breach.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticket = created.json() as { id: string; team_id: string | null };
+    expect(ticket.team_id).toBeTruthy();
+
+    const lead = await admin.query<{ lead_user_id: string }>(
+      "select lead_user_id from teams where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, ticket.team_id],
+    );
+    expect(lead.rows[0]?.lead_user_id).toBeTruthy();
+
+    await admin.query(
+      `update tickets
+       set sla_resolution_due_at = now() - interval '1 minute',
+           sla_paused_at = null, resolved_at = null, closed_at = null,
+           deleted_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $2`,
+      [fixtures.acme.id, ticket.id],
+    );
+
+    const first = await applyEscalations(admin);
+    expect(first).toBeGreaterThanOrEqual(1);
+    const pages = await admin.query<{ id: string; threshold_percent: number }>(
+      `select id, threshold_percent from ticket_escalations
+       where tenant_id = $1 and ticket_id = $2`,
+      [fixtures.acme.id, ticket.id],
+    );
+    expect(pages.rowCount).toBe(1);
+    expect(pages.rows[0]?.threshold_percent).toBe(100);
+
+    const notices = await admin.query<{ recipient_id: string }>(
+      `select recipient_id from notifications
+       where tenant_id = $1 and ticket_id = $2 and dedupe_key like '%sla_escalated%'`,
+      [fixtures.acme.id, ticket.id],
+    );
+    expect(notices.rows.map((row) => row.recipient_id)).toContain(lead.rows[0]?.lead_user_id);
+
+    const second = await applyEscalations(admin);
+    expect(second).toBeGreaterThanOrEqual(0);
+    const again = await admin.query(
+      "select id from ticket_escalations where tenant_id = $1 and ticket_id = $2",
+      [fixtures.acme.id, ticket.id],
+    );
+    expect(again.rowCount).toBe(1);
+  });
+
+  it("does not persist an escalation when nobody can be notified", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const employee = await login("employee@acme.test");
+    const policy = await inject(adminCookie, {
+      method: "POST",
+      url: "/api/t/acme/escalation-policies",
+      payload: {
+        name: `Manager only ${Date.now()}`,
+        slaKind: "response",
+        thresholdPercent: 100,
+        targetType: "manager",
+      },
+    });
+    expect(policy.statusCode, policy.body).toBe(200);
+
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Escalate nobody ${Date.now()}`,
+        description: "Unassigned, so manager target has no recipient.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticket = created.json() as { id: string; assignee_id: string | null };
+    expect(ticket.assignee_id).toBeNull();
+
+    await admin.query(
+      `update tickets
+       set sla_response_due_at = now() - interval '1 minute',
+           first_responded_at = null, sla_paused_at = null, closed_at = null,
+           deleted_at = null, merged_into_ticket_id = null
+       where tenant_id = $1 and id = $2`,
+      [fixtures.acme.id, ticket.id],
+    );
+
+    await applyEscalations(admin);
+    const pages = await admin.query(
+      `select e.id from ticket_escalations e
+       where e.tenant_id = $1 and e.ticket_id = $2 and e.policy_id = $3`,
+      [fixtures.acme.id, ticket.id, policy.json().id],
+    );
+    expect(pages.rowCount).toBe(0);
+  });
+});
+
+describe("first response vs acknowledgement", () => {
+  it("does not stop the clock when a ticket is created with auto-email", async () => {
+    const employee = await login("employee@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Auto email clock ${Date.now()}`,
+        description: "Creation auto-email should not stop clock.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticketId = created.json().id;
+
+    const row = await admin.query<{ first_responded_at: Date | null }>(
+      "select first_responded_at from tickets where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, ticketId],
+    );
+    expect(row.rows[0]?.first_responded_at).toBeNull();
+  });
+
+  it("does not stop the clock on acknowledgement comment", async () => {
+    const employee = await login("employee@acme.test");
+    const adminCookie = await login("admin@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Ack comment clock ${Date.now()}`,
+        description: "Ack comment should not stop clock.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticketId = created.json().id;
+
+    const ack = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${ticketId}/comments`,
+      payload: {
+        body: "Thanks for reaching out. We have logged your request.",
+        visibility: "public",
+        countsAsFirstResponse: false,
+      },
+    });
+    expect(ack.statusCode, ack.body).toBe(200);
+
+    const row = await admin.query<{ first_responded_at: Date | null }>(
+      "select first_responded_at from tickets where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, ticketId],
+    );
+    expect(row.rows[0]?.first_responded_at).toBeNull();
+  });
+
+  it("stops the clock on explicit first response public reply", async () => {
+    const employee = await login("employee@acme.test");
+    const adminCookie = await login("admin@acme.test");
+    const created = await inject(employee, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `First response clock ${Date.now()}`,
+        description: "Explicit reply should stop clock.",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const ticketId = created.json().id;
+
+    const reply = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${ticketId}/comments`,
+      payload: {
+        body: "We have analyzed the issue and resolved the configuration error.",
+        visibility: "public",
+        countsAsFirstResponse: true,
+      },
+    });
+    expect(reply.statusCode, reply.body).toBe(200);
+
+    const row = await admin.query<{ first_responded_at: Date | null }>(
+      "select first_responded_at from tickets where tenant_id = $1 and id = $2",
+      [fixtures.acme.id, ticketId],
+    );
+    expect(row.rows[0]?.first_responded_at).not.toBeNull();
   });
 });
 
@@ -764,5 +1106,274 @@ describe("invitations", () => {
       payload: { email: `blocked-${Date.now()}@acme.test`, role: "employee", teamIds: [] },
     });
     expect(forbidden.statusCode).toBe(403);
+  });
+
+  it("allows an existing user to join a second tenant by membership without duplicating user row", async () => {
+    const globexAdmin = await login("admin@globex.test");
+    const email = "employee@acme.test";
+
+    const invite = await inject(globexAdmin, {
+      method: "POST",
+      url: "/api/t/globex/invitations",
+      payload: { email, role: "employee", teamIds: [] },
+    });
+    expect(invite.statusCode, invite.body).toBe(200);
+
+    const queued = await admin.query<{ body: string }>(
+      `select body from email_messages
+       where tenant_id = $1 and recipient = $2
+       order by created_at desc limit 1`,
+      [fixtures.globex.id, email],
+    );
+    const token = queued.rows[0]?.body.match(/\/invite\/([^\s\n]+)/)?.[1];
+    expect(token).toBeTruthy();
+
+    const check = await app.inject({
+      method: "GET",
+      url: `/api/auth/invitations/${encodeURIComponent(token ?? "")}`,
+    });
+    expect(check.statusCode).toBe(200);
+    expect(check.json().existingUser).toBe(true);
+
+    const accept = await app.inject({
+      method: "POST",
+      url: `/api/auth/invitations/${encodeURIComponent(token ?? "")}/accept`,
+      payload: { password: "Passw0rd!" },
+    });
+    expect(accept.statusCode, accept.body).toBe(200);
+
+    const userRows = await admin.query(
+      "select id from users where email = $1",
+      [email],
+    );
+    expect(userRows.rowCount).toBe(1);
+
+    const memberRows = await admin.query<{ tenant_id: string }>(
+      "select tenant_id from memberships where user_id = $1",
+      [userRows.rows[0]?.id],
+    );
+    expect(memberRows.rowCount).toBe(2);
+    const tenantIds = memberRows.rows.map((r) => r.tenant_id);
+    expect(tenantIds).toContain(fixtures.acme.id);
+    expect(tenantIds).toContain(fixtures.globex.id);
+
+    const dupInvite = await inject(globexAdmin, {
+      method: "POST",
+      url: "/api/t/globex/invitations",
+      payload: { email, role: "employee", teamIds: [] },
+    });
+    expect(dupInvite.statusCode).toBe(400);
+  });
+});
+
+describe("SLA reporting: stopped clocks and business hours", () => {
+  it("reports breached, met, and still running separately and uses stopped clocks for compliance", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const baseRes = await inject(adminCookie, {
+      method: "GET",
+      url: "/api/t/acme/reports?days=30",
+    });
+    expect(baseRes.statusCode).toBe(200);
+    const baseSummary = baseRes.json().summary;
+
+    const policyResult = await admin.query<{ id: string }>(
+      "select id from sla_policies where tenant_id = $1 limit 1",
+      [fixtures.acme.id],
+    );
+    const policyId = policyResult.rows[0]?.id;
+    if (!policyId) throw new Error("No policy found");
+    const resolvedStatus = await fixtures.acmeStatus("resolved");
+    const openStatus = await fixtures.acmeStatus("open");
+
+    // 1. Ticket still running within window
+    await admin.query(
+      `insert into tickets (
+        tenant_id, number, subject, description, requester_id, status_id, priority_id, category_id, sla_policy_id,
+        created_at, sla_response_due_at, sla_resolution_due_at
+      ) values (
+        $1, 9991, 'Running Ticket', 'Running SLA', $2, $3, $4, $5, $6,
+        now() - interval '2 hours', now() + interval '2 hours', now() + interval '10 hours'
+      )`,
+      [fixtures.acme.id, fixtures.acmeEmployeeId, openStatus, fixtures.acmePriority, fixtures.acmeCategory, policyId],
+    );
+
+    // 2. Ticket met SLA (stopped clock, resolved on time)
+    await admin.query(
+      `insert into tickets (
+        tenant_id, number, subject, description, requester_id, status_id, priority_id, category_id, sla_policy_id,
+        created_at, resolved_at, first_responded_at, sla_response_due_at, sla_resolution_due_at
+      ) values (
+        $1, 9992, 'Met Ticket', 'Met SLA', $2, $3, $4, $5, $6,
+        now() - interval '3 hours', now() - interval '1 hour', now() - interval '2 hours',
+        now() + interval '1 hour', now() + interval '5 hours'
+      )`,
+      [fixtures.acme.id, fixtures.acmeEmployeeId, resolvedStatus, fixtures.acmePriority, fixtures.acmeCategory, policyId],
+    );
+
+    // 3. Ticket breached SLA
+    await admin.query(
+      `insert into tickets (
+        tenant_id, number, subject, description, requester_id, status_id, priority_id, category_id, sla_policy_id,
+        created_at, sla_response_breached_at, sla_response_due_at, sla_resolution_due_at
+      ) values (
+        $1, 9993, 'Breached Ticket', 'Breached SLA', $2, $3, $4, $5, $6,
+        now() - interval '4 hours', now() - interval '1 hour',
+        now() - interval '2 hours', now() + interval '2 hours'
+      )`,
+      [fixtures.acme.id, fixtures.acmeEmployeeId, openStatus, fixtures.acmePriority, fixtures.acmeCategory, policyId],
+    );
+
+    const reportRes = await inject(adminCookie, {
+      method: "GET",
+      url: "/api/t/acme/reports?days=30",
+    });
+    expect(reportRes.statusCode).toBe(200);
+    const summary = reportRes.json().summary;
+
+    expect(summary.sla_still_running).toBe(baseSummary.sla_still_running + 1);
+    expect(summary.sla_met).toBe(baseSummary.sla_met + 1);
+    expect(summary.sla_breached).toBe(baseSummary.sla_breached + 1);
+
+    // Compliance percent uses only stopped clocks: met / (met + breached) * 100
+    const expectedCompliance = Number(
+      ((summary.sla_met / (summary.sla_met + summary.sla_breached)) * 100).toFixed(1),
+    );
+    expect(summary.sla_compliance_percent).toBeCloseTo(expectedCompliance, 1);
+  });
+});
+
+describe("ticket merge", () => {
+  it("keeps secondary requester as participant, copies attachments, and writes internal note without stamping first response", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const emp1Cookie = await login("employee@acme.test");
+
+    const emp2Id = "00000000-0000-0000-0000-000000000099";
+    const emp2Email = "employee2@acme.test";
+    await admin.query(
+      `insert into users (id, email, password_hash, display_name)
+       values ($1, $2, $3, 'Employee Two')
+       on conflict (email) do nothing`,
+      [emp2Id, emp2Email, hashPassword("Passw0rd!")],
+    );
+    await admin.query(
+      `insert into memberships (tenant_id, user_id, role)
+       values ($1, $2, 'employee')
+       on conflict (tenant_id, user_id) do nothing`,
+      [fixtures.acme.id, emp2Id],
+    );
+    const emp2Cookie = await login(emp2Email);
+
+    // 1. Employee 1 creates Ticket A (primary)
+    const ticketARes = await inject(emp1Cookie, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Primary Ticket ${Date.now()}`,
+        description: "Primary ticket body",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(ticketARes.statusCode).toBe(200);
+    const ticketA = ticketARes.json() as { id: string; number: number; first_responded_at: string | null };
+    expect(ticketA.first_responded_at).toBeNull();
+
+    // 2. Employee 2 creates Ticket B (secondary)
+    const ticketBRes = await inject(emp2Cookie, {
+      method: "POST",
+      url: "/api/t/acme/tickets",
+      payload: {
+        subject: `Secondary Ticket ${Date.now()}`,
+        description: "Secondary ticket body",
+        categoryId: fixtures.acmeCategory,
+        customFields: { site: "HQ" },
+      },
+    });
+    expect(ticketBRes.statusCode).toBe(200);
+    const ticketB = ticketBRes.json() as { id: string; number: number };
+
+    // Attach a file to Ticket B
+    const attId = "00000000-0000-0000-0000-000000000088";
+    await admin.query(
+      `insert into ticket_attachments (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key)
+       values ($1, $2, $3, $4, 'document.pdf', 'application/pdf', 1024, 'acme/test/document.pdf')`,
+      [fixtures.acme.id, attId, ticketB.id, emp2Id],
+    );
+
+    // Verify Employee 2 cannot read Ticket A before merge
+    const preCheck = await inject(emp2Cookie, {
+      method: "GET",
+      url: `/api/t/acme/tickets/${ticketA.id}`,
+    });
+    expect(preCheck.statusCode).toBe(404);
+
+    // 3. Admin merges Ticket B into Ticket A
+    const mergeRes = await inject(adminCookie, {
+      method: "POST",
+      url: `/api/t/acme/tickets/${ticketA.id}/merge`,
+      payload: {
+        targetTicketNumber: ticketB.number,
+        direction: "merge_into_this",
+        reason: "Duplicate issue",
+      },
+    });
+    expect(mergeRes.statusCode, mergeRes.body).toBe(200);
+
+    // 4. Verify attachments were copied to Ticket A and remain on Ticket B
+    const attsOnPrimary = await admin.query<{ filename: string }>(
+      `select id, filename from ticket_attachments where tenant_id = $1 and ticket_id = $2`,
+      [fixtures.acme.id, ticketA.id],
+    );
+    expect(attsOnPrimary.rowCount).toBe(1);
+    expect(attsOnPrimary.rows[0]?.filename).toBe("document.pdf");
+
+    const attsOnSecondary = await admin.query(
+      `select id from ticket_attachments where tenant_id = $1 and ticket_id = $2`,
+      [fixtures.acme.id, ticketB.id],
+    );
+    expect(attsOnSecondary.rowCount).toBe(1);
+
+    // 5. Verify Employee 2 is participant on Ticket A and can read Ticket A
+    const participantRows = await admin.query(
+      `select user_id from ticket_participants where tenant_id = $1 and ticket_id = $2 and user_id = $3`,
+      [fixtures.acme.id, ticketA.id, emp2Id],
+    );
+    expect(participantRows.rowCount).toBe(1);
+
+    const postCheck = await inject(emp2Cookie, {
+      method: "GET",
+      url: `/api/t/acme/tickets/${ticketA.id}`,
+    });
+    expect(postCheck.statusCode).toBe(200);
+
+    const listRes = await inject(emp2Cookie, {
+      method: "GET",
+      url: "/api/t/acme/tickets",
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listedIds = (listRes.json().items as Array<{ id: string }>).map((item) => item.id);
+    expect(listedIds).toContain(ticketA.id);
+
+    // 6. Verify merge note is internal and first_responded_at was not stamped
+    const detailAfter = (await inject(adminCookie, {
+      method: "GET",
+      url: `/api/t/acme/tickets/${ticketA.id}`,
+    })).json() as { first_responded_at: string | null; comments: Array<{ visibility: string; body: string }> };
+    expect(detailAfter.first_responded_at).toBeNull();
+
+    const mergeNotes = detailAfter.comments.filter((c) => c.body.includes(`Merged ticket #${ticketB.number}`));
+    expect(mergeNotes.length).toBeGreaterThan(0);
+    for (const note of mergeNotes) {
+      expect(note.visibility).toBe("internal");
+    }
+
+    // 7. Verify Employee 2 was notified of merge
+    const notice = await admin.query<{ subject: string }>(
+      `select subject, body, recipient_id from notifications
+       where tenant_id = $1 and recipient_id = $2 and dedupe_key like '%ticket_merged%'`,
+      [fixtures.acme.id, emp2Id],
+    );
+    expect(notice.rowCount).toBe(1);
+    expect(notice.rows[0]?.subject).toContain(String(ticketA.number));
   });
 });

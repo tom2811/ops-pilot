@@ -8,7 +8,7 @@ import { createMailer } from "./mailer.js";
 import { writeAudit } from "./audit.js";
 import { enqueueEvent } from "./outbox.js";
 import { processInboundEmail } from "./domain/inboundEmail.js";
-import { markSlaBreaches, markSlaWarnings } from "./domain/sla.js";
+import { applyEscalations, markSlaBreaches, markSlaWarnings } from "./domain/sla.js";
 import { addBusinessMinutes, renderTemplate } from "@opspilot/core";
 import { getBusinessHoursConfig } from "./domain/tickets.js";
 
@@ -347,6 +347,8 @@ async function runMaintenance(): Promise<void> {
   }
   const chasers = await sendPendingChasers();
   if (chasers > 0) log("pending_chasers_sent", { count: chasers });
+  const escalations = await applyEscalations(pool);
+  if (escalations > 0) log("sla_escalations_sent", { count: escalations });
   const closed = await autoCloseTickets();
   if (closed > 0) log("tickets_auto_closed", { count: closed });
 }
@@ -626,18 +628,21 @@ async function processEmails(): Promise<void> {
   }
 }
 
+async function deadLetter(event: OutboxRow, reason: string): Promise<void> {
+  await pool.query(
+    "update outbox_events set status = 'dead', locked_until = null, last_error = $2 where id = $1",
+    [event.id, reason.slice(0, 2000)],
+  );
+  log("event_dead", { eventId: event.id, eventType: event.event_type, reason });
+}
+
 async function deliver(event: OutboxRow): Promise<void> {
   if (event.event_type !== "ticket.created") {
-    await pool.query("update outbox_events set status = 'delivered', delivered_at = now(), locked_until = null where id = $1", [
-      event.id,
-    ]);
+    await deadLetter(event, `No handler for ${event.event_type}`);
     return;
   }
   if (!workerEnv.N8N_WEBHOOK_URL || !workerEnv.N8N_WEBHOOK_SECRET) {
-    log("n8n_not_configured", { eventId: event.id });
-    await pool.query("update outbox_events set status = 'delivered', delivered_at = now(), locked_until = null where id = $1", [
-      event.id,
-    ]);
+    await deadLetter(event, "n8n is not configured");
     return;
   }
 

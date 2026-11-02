@@ -15,11 +15,18 @@ export const STAGE_LABELS: Record<Stage, string> = {
   closed: "Closed",
 };
 
-export const DEFAULT_STATUSES: Array<{ key: string; label: string; stage: Stage; sortOrder: number }> = [
+export const DEFAULT_STATUSES: Array<{
+  key: string;
+  label: string;
+  stage: Stage;
+  sortOrder: number;
+  pausesSla?: boolean;
+}> = [
   { key: "new", label: "New", stage: "new", sortOrder: 10 },
   { key: "open", label: "Open", stage: "open", sortOrder: 20 },
   { key: "in_progress", label: "In progress", stage: "in_progress", sortOrder: 30 },
-  { key: "pending", label: "Pending", stage: "pending", sortOrder: 40 },
+  { key: "pending", label: "Waiting on customer", stage: "pending", sortOrder: 40, pausesSla: true },
+  { key: "waiting_on_vendor", label: "Waiting on vendor", stage: "pending", sortOrder: 45, pausesSla: false },
   { key: "resolved", label: "Resolved", stage: "resolved", sortOrder: 50 },
   { key: "closed", label: "Closed", stage: "closed", sortOrder: 60 },
 ];
@@ -68,6 +75,16 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: strin
     key: "pending_chaser",
     subject: "Reminder: Waiting for your reply on ticket #{{number}}",
     body: "Hello {{requesterName}},\n\nYour ticket #{{number}} (\"{{subject}}\") is currently waiting on your input. If no reply is received, the ticket will be automatically resolved.\n\nPlease reply directly to this email to provide an update.",
+  },
+  {
+    key: "sla_escalated",
+    subject: "SLA escalation: Ticket #{{number}}",
+    body: "Ticket #{{number}} (\"{{subject}}\") has reached {{threshold}}% of its {{kind}} SLA and was escalated.",
+  },
+  {
+    key: "ticket_merged",
+    subject: "Ticket #{{secondaryNumber}} was merged into #{{number}}",
+    body: "Your ticket #{{secondaryNumber}} (\"{{secondarySubject}}\") was merged into #{{number}} (\"{{subject}}\"). Follow the conversation on the surviving ticket.",
   },
 ];
 
@@ -164,6 +181,14 @@ export const DEFAULT_TRANSITIONS: TransitionSeed[] = [
   { from: "pending", to: "in_progress", role: "tenant_admin", requiresAssignee: true },
   { from: "pending", to: "resolved", role: "agent", requiresAssignee: true, requiresSummary: true },
   { from: "pending", to: "resolved", role: "tenant_admin", requiresAssignee: true, requiresSummary: true },
+  { from: "open", to: "waiting_on_vendor", role: "agent", requiresAssignee: true, requiresReason: true },
+  { from: "open", to: "waiting_on_vendor", role: "tenant_admin", requiresAssignee: true, requiresReason: true },
+  { from: "in_progress", to: "waiting_on_vendor", role: "agent", requiresAssignee: true, requiresReason: true },
+  { from: "in_progress", to: "waiting_on_vendor", role: "tenant_admin", requiresAssignee: true, requiresReason: true },
+  { from: "waiting_on_vendor", to: "in_progress", role: "agent", requiresAssignee: true },
+  { from: "waiting_on_vendor", to: "in_progress", role: "tenant_admin", requiresAssignee: true },
+  { from: "waiting_on_vendor", to: "resolved", role: "agent", requiresAssignee: true, requiresSummary: true },
+  { from: "waiting_on_vendor", to: "resolved", role: "tenant_admin", requiresAssignee: true, requiresSummary: true },
   { from: "resolved", to: "closed", role: "tenant_admin" },
   { from: "resolved", to: "closed", role: "employee" },
   { from: "resolved", to: "open", role: "employee", requiresReason: true },
@@ -180,7 +205,6 @@ export const createTicketSchema = z.object({
   subject: z.string().trim().min(1).max(200),
   description: z.string().trim().min(1).max(20000),
   categoryId: z.string().uuid(),
-  priorityId: z.string().uuid(),
   customFields: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -194,6 +218,7 @@ export const transitionSchema = z.object({
 export const commentSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   visibility: z.enum(["public", "internal"]).default("public"),
+  countsAsFirstResponse: z.boolean().default(false),
 });
 
 export const assignSchema = z.object({
@@ -384,6 +409,33 @@ export const slaPolicyInputSchema = z.object({
   businessHoursOnly: z.boolean().optional(),
 });
 
+const escalationPolicyFields = z.object({
+  name: z.string().trim().min(1).max(120),
+  slaKind: z.enum(["response", "resolution"]),
+  thresholdPercent: z.number().int().min(1).max(100),
+  targetType: z.enum(["manager", "team_lead", "team"]),
+  targetTeamId: z.string().uuid().nullable().optional(),
+});
+
+export const escalationPolicyInputSchema = escalationPolicyFields.superRefine((value, context) => {
+  if (value.targetType === "team" && !value.targetTeamId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["targetTeamId"],
+      message: "A target team is required when escalating to a team",
+    });
+  }
+  if (value.targetType !== "team" && value.targetTeamId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["targetTeamId"],
+      message: "Target team is only used when escalating to a team",
+    });
+  }
+});
+
+export const escalationPolicyUpdateSchema = escalationPolicyFields.partial();
+
 export const notificationTemplateInputSchema = z.object({
   subject: z.string().trim().min(1).max(300),
   body: z.string().trim().min(1).max(20000),
@@ -492,8 +544,8 @@ export function formatTicketNumber(prefix: string, number: number | string): str
   return `${prefix}-${String(number).padStart(6, "0")}`;
 }
 
-export function stagePausesResolution(stage: Stage): boolean {
-  return stage === "pending";
+export function stagePausesResolution(pausesSla: boolean): boolean {
+  return pausesSla;
 }
 
 export function stageStopsResolution(stage: Stage): boolean {
@@ -507,6 +559,7 @@ export type BusinessHoursConfig = {
   endMinute: number;
   businessDays: number[];
   timeZone?: string;
+  holidays?: string[];
 };
 
 export function isValidTimeZone(timeZone: string): boolean {
@@ -585,23 +638,57 @@ function zonedTimeToUtc(
   return new Date(timestamp + milliseconds);
 }
 
+function localDateKey(parts: ZonedParts): string {
+  const month = String(parts.month).padStart(2, "0");
+  const day = String(parts.day).padStart(2, "0");
+  return `${parts.year}-${month}-${day}`;
+}
+
+type OpenCalendar = {
+  timeZone: string;
+  startHour: number;
+  startMinute: number;
+  startTotal: number;
+  endTotal: number;
+  businessDays: Set<number>;
+  holidays: Set<string>;
+};
+
+function openCalendar(config?: BusinessHoursConfig): OpenCalendar | null {
+  if (!config) return null;
+  const startTotal = config.startHour * 60 + config.startMinute;
+  const endTotal = config.endHour * 60 + config.endMinute;
+  const businessDays = new Set(config.businessDays.filter((day) => day >= 1 && day <= 7));
+  if (endTotal <= startTotal || businessDays.size === 0) return null;
+  return {
+    timeZone: config.timeZone && isValidTimeZone(config.timeZone) ? config.timeZone : "UTC",
+    startHour: config.startHour,
+    startMinute: config.startMinute,
+    startTotal,
+    endTotal,
+    businessDays,
+    holidays: new Set(config.holidays ?? []),
+  };
+}
+
+function dayIsClosed(local: ZonedParts, calendar: OpenCalendar): boolean {
+  return !calendar.businessDays.has(local.weekday) || calendar.holidays.has(localDateKey(local));
+}
+
 export function addBusinessMinutes(
   from: Date,
   minutesToAdd: number,
   config?: BusinessHoursConfig,
 ): Date {
-  if (!config || minutesToAdd <= 0) {
+  const calendar = openCalendar(config);
+  if (!calendar || minutesToAdd <= 0) {
     return new Date(from.getTime() + minutesToAdd * 60000);
   }
-  const timeZone = config.timeZone && isValidTimeZone(config.timeZone) ? config.timeZone : "UTC";
-  const startHour = config.startHour;
-  const startMinute = config.startMinute;
-  const startTotal = startHour * 60 + startMinute;
-  const endTotal = config.endHour * 60 + config.endMinute;
-  const businessDays = new Set(config.businessDays.filter((day) => day >= 1 && day <= 7));
-  if (endTotal <= startTotal || businessDays.size === 0) {
-    return new Date(from.getTime() + minutesToAdd * 60000);
-  }
+  const timeZone = calendar.timeZone;
+  const startHour = calendar.startHour;
+  const startMinute = calendar.startMinute;
+  const startTotal = calendar.startTotal;
+  const endTotal = calendar.endTotal;
 
   const milliseconds = from.getUTCMilliseconds();
   let cursor = new Date(from);
@@ -627,7 +714,7 @@ export function addBusinessMinutes(
     const local = zonedParts(cursor, timeZone);
     const currentMins = local.hour * 60 + local.minute;
 
-    if (!businessDays.has(local.weekday) || currentMins >= endTotal) {
+    if (dayIsClosed(local, calendar) || currentMins >= endTotal) {
       cursor = dayStart(local, 1);
       continue;
     }
@@ -658,6 +745,96 @@ export function addBusinessMinutes(
   }
 
   return cursor;
+}
+
+export function businessMinutesBetween(from: Date, to: Date, config?: BusinessHoursConfig): number {
+  if (to.getTime() <= from.getTime()) return 0;
+  const calendar = openCalendar(config);
+  if (!calendar) return Math.floor((to.getTime() - from.getTime()) / 60000);
+
+  const timeZone = calendar.timeZone;
+  const startHour = calendar.startHour;
+  const startMinute = calendar.startMinute;
+  const startTotal = calendar.startTotal;
+  const endTotal = calendar.endTotal;
+  let cursor = new Date(from);
+  let total = 0;
+
+  function dayStart(parts: ZonedParts, daysAhead: number): Date {
+    const next = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysAhead));
+    return zonedTimeToUtc(
+      {
+        year: next.getUTCFullYear(),
+        month: next.getUTCMonth() + 1,
+        day: next.getUTCDate(),
+        hour: startHour,
+        minute: startMinute,
+        second: 0,
+      },
+      timeZone,
+      0,
+    );
+  }
+
+  for (let guard = 0; cursor.getTime() < to.getTime() && guard < 10000; guard += 1) {
+    const local = zonedParts(cursor, timeZone);
+    const currentMins = local.hour * 60 + local.minute;
+    if (dayIsClosed(local, calendar) || currentMins >= endTotal) {
+      const next = dayStart(local, 1);
+      if (next.getTime() <= cursor.getTime()) return total;
+      cursor = next;
+      continue;
+    }
+    if (currentMins < startTotal) {
+      const start = dayStart(local, 0);
+      cursor = start.getTime() > cursor.getTime() ? start : dayStart(local, 1);
+      continue;
+    }
+    const available = endTotal - currentMins;
+    const untilEnd = Math.floor((to.getTime() - cursor.getTime()) / 60000);
+    const span = Math.min(available, untilEnd);
+    if (span <= 0) break;
+    total += span;
+    if (span >= untilEnd) break;
+    cursor = dayStart(local, 1);
+  }
+  return total;
+}
+
+export function shiftedSlaDue(input: {
+  oldDue: Date | null;
+  oldMinutes: number;
+  newMinutes: number;
+  clock: Date;
+  config?: BusinessHoursConfig;
+}): Date | null {
+  if (input.newMinutes <= 0) return null;
+  if (!input.oldDue || input.oldMinutes <= 0) {
+    return addBusinessMinutes(input.clock, input.newMinutes, input.config);
+  }
+  if (input.oldDue.getTime() <= input.clock.getTime()) {
+    const extra = Math.max(0, input.newMinutes - input.oldMinutes);
+    return extra === 0 ? input.oldDue : addBusinessMinutes(input.oldDue, extra, input.config);
+  }
+  const remainingOld = Math.min(
+    input.oldMinutes,
+    businessMinutesBetween(input.clock, input.oldDue, input.config),
+  );
+  const consumed = Math.max(0, input.oldMinutes - remainingOld);
+  const remainingNew = Math.max(0, input.newMinutes - consumed);
+  if (remainingNew === 0) return input.clock;
+  return addBusinessMinutes(input.clock, remainingNew, input.config);
+}
+
+export function slaWarnDue(input: {
+  oldDue: Date | null;
+  oldMinutes: number;
+  newMinutes: number;
+  clock: Date;
+  config?: BusinessHoursConfig;
+}): Date | null {
+  const threshold = Math.min(input.newMinutes, Math.max(1, Math.round(input.newMinutes * 0.8)));
+  return shiftedSlaDue({ ...input, newMinutes: threshold });
 }
 
 export function isSlaAtRisk(

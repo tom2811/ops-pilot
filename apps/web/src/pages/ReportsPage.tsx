@@ -100,8 +100,10 @@ export function ReportsPage() {
     lines.push(`"Unassigned Tickets",${report.summary.unassigned}`);
     lines.push(`"Tickets Created in Period",${report.summary.created_period}`);
     lines.push(`"Tickets Resolved (Last 7 Days)",${report.summary.resolved_week}`);
-    lines.push(`"SLA Breached",${report.summary.sla_breached}`);
-    lines.push(`"SLA Compliance Rate",${(report.summary.sla_compliance_percent ?? 100).toFixed(1)}%`);
+    lines.push(`"SLA Breached (Period)",${report.summary.sla_breached}`);
+    lines.push(`"SLA Met (Period)",${report.summary.sla_met ?? 0}`);
+    lines.push(`"SLA Still Running (Period)",${report.summary.sla_still_running ?? 0}`);
+    lines.push(`"SLA Compliance Rate (Stopped Clocks)",${(report.summary.sla_compliance_percent ?? 100).toFixed(1)}%`);
     lines.push(`"Average First Response Minutes",${report.summary.avg_response_minutes.toFixed(1)}`);
     lines.push(`"Average Resolution Hours",${report.summary.avg_resolution_hours.toFixed(1)}`);
     lines.push(`"CSAT Average Score",${report.csat.average.toFixed(2)}`);
@@ -190,7 +192,7 @@ export function ReportsPage() {
         <div className="stack-lg" role="status" aria-busy="true">
           <span className="sr-only">Loading report</span>
           <section className="stat-grid report-stats" aria-hidden="true">
-            {Array.from({ length: 7 }, (_, index) => (
+            {Array.from({ length: 9 }, (_, index) => (
               <div key={index} className="stat-card">
                 <span className="skeleton" style={{ width: 76 }} />
                 <span className="skeleton" style={{ width: 56, height: 26 }} />
@@ -242,17 +244,31 @@ export function ReportsPage() {
             </div>
             <div className="stat-card">
               <span>SLA compliance</span>
-              <strong className={(report.summary?.sla_compliance_percent ?? 100) < 90 ? "warning" : undefined}>
+              <strong className={(report.summary?.sla_compliance_percent ?? 100) < 90 ? "warning" : "success"}>
                 {report.summary?.sla_compliance_percent !== undefined ? `${report.summary.sla_compliance_percent}%` : "-"}
               </strong>
-              <small>{(report.summary?.sla_breached ?? 0) === 0 ? "0 breaches" : `${report.summary?.sla_breached} breached`}</small>
+              <small>stopped clocks only</small>
             </div>
             <div className="stat-card">
               <span>SLA breached</span>
               <strong className={(report.summary?.sla_breached ?? 0) > 0 ? "danger" : undefined}>
                 {report.summary?.sla_breached ?? 0}
               </strong>
-              <small>all visible tickets</small>
+              <small>in period</small>
+            </div>
+            <div className="stat-card">
+              <span>SLA met</span>
+              <strong className={(report.summary?.sla_met ?? 0) > 0 ? "success" : undefined}>
+                {report.summary?.sla_met ?? 0}
+              </strong>
+              <small>in period</small>
+            </div>
+            <div className="stat-card">
+              <span>SLA still running</span>
+              <strong>
+                {report.summary?.sla_still_running ?? 0}
+              </strong>
+              <small>in period</small>
             </div>
             <div className="stat-card">
               <span>Avg first response</span>

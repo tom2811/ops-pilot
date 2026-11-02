@@ -9,6 +9,22 @@ import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
 
+function clockAtRisk(
+  warnDue: string | null | undefined,
+  due: string | null | undefined,
+  createdAt: string,
+): boolean {
+  if (!due) return false;
+  const end = new Date(due).getTime();
+  const now = Date.now();
+  if (!Number.isFinite(end) || now >= end) return false;
+  if (warnDue) {
+    const warn = new Date(warnDue).getTime();
+    return Number.isFinite(warn) && now >= warn;
+  }
+  return isSlaAtRisk(createdAt, due);
+}
+
 export function CustomFieldInput({
   field,
   value,
@@ -116,7 +132,6 @@ function NewTicketSheet({
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState(config.categories[0]?.id ?? "");
-  const [priorityId, setPriorityId] = useState(config.priorities[0]?.id ?? "");
   const [customFields, setCustomFields] = useState<Record<string, unknown>>({});
   const [route, setRoute] = useState<RoutePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,9 +149,13 @@ function NewTicketSheet({
   async function preview(): Promise<void> {
     setError(null);
     try {
+      const selected = config.categories.find((category) => category.id === categoryId);
       const result = await post<RoutePreview>(`/t/${tenantSlug}/routing/preview`, {
         categoryId,
-        priorityId,
+        priorityId:
+          selected?.default_priority_id ??
+          config.priorities[config.priorities.length - 1]?.id ??
+          config.priorities[0]?.id,
         customFields,
       });
       setRoute(result);
@@ -160,7 +179,6 @@ function NewTicketSheet({
         subject,
         description,
         categoryId,
-        priorityId,
         customFields: cleanFields,
       });
       onCreated(ticket);
@@ -228,18 +246,6 @@ function NewTicketSheet({
                 setRoute(null);
               }}
               options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
-            />
-          </label>
-          <label>
-            Priority
-            <Select
-              ariaLabel="Priority"
-              value={priorityId}
-              onChange={(next) => {
-                setPriorityId(next);
-                setRoute(null);
-              }}
-              options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
             />
           </label>
           {fields.map((field) => (
@@ -578,8 +584,8 @@ export function TicketsPage() {
                   const slaWarning = Boolean(
                     ticket.sla_response_warning_at ||
                     ticket.sla_resolution_warning_at ||
-                    (ticket.sla_response_due_at && isSlaAtRisk(ticket.created_at, ticket.sla_response_due_at)) ||
-                    (ticket.sla_resolution_due_at && isSlaAtRisk(ticket.created_at, ticket.sla_resolution_due_at)),
+                    clockAtRisk(ticket.sla_response_warn_due_at, ticket.sla_response_due_at, ticket.created_at) ||
+                    clockAtRisk(ticket.sla_resolution_warn_due_at, ticket.sla_resolution_due_at, ticket.created_at),
                   );
                   const slaDue = ticket.sla_resolution_due_at;
                   const slaStopped = ticket.resolved_at ?? ticket.closed_at;

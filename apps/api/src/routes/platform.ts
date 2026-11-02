@@ -81,6 +81,10 @@ async function provisionTenant(tenantId: string, slugValue: string): Promise<voi
       const id = result.rows[0]?.id;
       if (id) priorityIds.set(priority.key, id);
     }
+    await client.query(
+      "update categories set default_priority_id = $2 where tenant_id = $1 and default_priority_id is null",
+      [tenantId, priorityIds.get("p3") ?? priorityIds.get("p4") ?? null],
+    );
 
     for (const policy of DEFAULT_SLA_POLICIES) {
       await client.query(
@@ -102,8 +106,16 @@ async function provisionTenant(tenantId: string, slugValue: string): Promise<voi
       const id = randomUUID();
       statusIds.set(status.key, id);
       await client.query(
-        "insert into ticket_statuses (tenant_id, id, key, label, stage, sort_order) values ($1, $2, $3, $4, $5, $6)",
-        [tenantId, id, status.key, status.label, status.stage, status.sortOrder],
+        "insert into ticket_statuses (tenant_id, id, key, label, stage, sort_order, pauses_sla) values ($1, $2, $3, $4, $5, $6, $7)",
+        [
+          tenantId,
+          id,
+          status.key,
+          status.label,
+          status.stage,
+          status.sortOrder,
+          status.pausesSla ?? status.stage === "pending",
+        ],
       );
     }
 
@@ -130,6 +142,13 @@ async function provisionTenant(tenantId: string, slugValue: string): Promise<voi
         [tenantId, template.key, template.subject, template.body],
       );
     }
+
+    await client.query(
+      `insert into escalation_policies
+        (tenant_id, name, sla_kind, threshold_percent, target_type)
+       values ($1, 'Resolution breach to team lead', 'resolution', 100, 'team_lead')`,
+      [tenantId],
+    );
 
     let sortOrder = 10;
     for (const category of [

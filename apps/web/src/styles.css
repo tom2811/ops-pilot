@@ -249,6 +249,10 @@ svg {
   color: var(--danger);
 }
 
+.warning {
+  color: var(--warning);
+}
+
 .success {
   color: var(--success);
 }
@@ -330,7 +334,7 @@ svg {
 }
 
 .sidebar {
-  --sb-pad: 12px;
+  --sb-pad: 13px;
   position: sticky;
   top: 0;
   z-index: 40;
@@ -2252,6 +2256,14 @@ tbody td:last-child {
   background: var(--warning);
 }
 
+.timeline-dot.danger {
+  background: var(--danger);
+}
+
+.timeline-dot.warning {
+  background: var(--warning);
+}
+
 .timeline strong {
   font-size: 12.5px;
   font-weight: 500;
@@ -3675,7 +3687,7 @@ body.sheet-open {
     z-index: 90;
     width: min(280px, 86vw);
     align-items: stretch;
-    padding: 12px;
+    padding: var(--sb-pad);
     transform: translateX(-102%);
     visibility: hidden;
     transition: transform 180ms ease, visibility 0s linear 180ms;

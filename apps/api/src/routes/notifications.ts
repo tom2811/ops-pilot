@@ -35,6 +35,38 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  app.get("/t/:tenantSlug/email-logs", async (req) => {
+    const { userId, tenantId } = context(req);
+    return withTenant(tenantId, userId, async (client) => {
+      const notifsResult = await client.query(
+        `select n.id, n.channel, n.subject, n.delivery_status, n.attempts, n.provider_message_id,
+                n.sent_at, n.created_at, n.last_error, u.email as recipient_email
+         from notifications n
+         left join users u on u.id = n.recipient_id
+         where n.tenant_id = $1
+         order by n.created_at desc
+         limit 100`,
+        [tenantId],
+      );
+
+      const inboundResult = await client.query(
+        `select i.id, i.message_id, i.from_address, i.to_address, i.subject, i.action,
+                i.ticket_id, i.created_at, t.number as ticket_number
+         from inbound_emails i
+         left join tickets t on t.id = i.ticket_id and t.tenant_id = i.tenant_id
+         where i.tenant_id = $1
+         order by i.created_at desc
+         limit 100`,
+        [tenantId],
+      );
+
+      return {
+        outbound: notifsResult.rows,
+        inbound: inboundResult.rows,
+      };
+    });
+  });
+
   app.put("/t/:tenantSlug/notification-templates/:templateId", async (req) => {
     const { userId, tenantId, role } = context(req);
     const { templateId } = params.parse(req.params);

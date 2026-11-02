@@ -18,6 +18,7 @@ import {
   addComment,
   applyTransition,
   assignTicket,
+  claimTicket,
   createTicket,
   createTicketLink,
   deleteTicket,
@@ -35,7 +36,7 @@ const listQuery = z.object({
   priority: z.string().optional(),
   assignee: z.enum(["me", "none"]).optional(),
   state: z.enum(["open", "closed"]).optional(),
-  sort: z.enum(["priority", "updated"]).default("priority"),
+  sort: z.enum(["priority", "updated", "due"]).default("due"),
   q: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(25),
@@ -162,7 +163,6 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
           subject: input.subject,
           description: input.description,
           categoryId: input.categoryId,
-          priorityId: input.priorityId,
           customFields: input.customFields,
         },
         req.correlationId,
@@ -258,6 +258,19 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  app.post(
+    "/t/:tenantSlug/tickets/:ticketId/claim",
+    { preHandler: requirePermission("tickets.assign") },
+    async (req) => {
+      const { userId, tenantId, role } = context(req);
+      const params = ticketParams.parse(req.params);
+      const input = z.object({ expectedVersion: z.number().int().nonnegative() }).parse(req.body);
+      return withTenant(tenantId, userId, async (client) =>
+        claimTicket(client, tenantId, userId, role, params.ticketId, input.expectedVersion, req.correlationId),
+      );
+    },
+  );
+
   app.post("/t/:tenantSlug/tickets/:ticketId/comments", async (req) => {
     const { userId, tenantId, role } = context(req);
     const params = ticketParams.parse(req.params);
@@ -269,7 +282,7 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
         userId,
         role,
         params.ticketId,
-        { body: input.body, visibility: input.visibility },
+        { body: input.body, visibility: input.visibility, countsAsFirstResponse: input.countsAsFirstResponse },
         req.correlationId,
       ),
     );

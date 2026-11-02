@@ -18,6 +18,7 @@ import { Icon, BrandMark, Menu, ThemeToggle, useTheme, type IconName } from "./u
 import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
+import { EmailLogsPage } from "./pages/EmailLogsPage.js";
 import { InvitationPage } from "./pages/InvitationPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { FeedbackPage } from "./pages/FeedbackPage.js";
@@ -76,6 +77,7 @@ function TenantLayoutSkeleton({
             <p className="sb-label">Insights</p>
             <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="reports" /><span className="sb-item-label">Reports</span></div>
             <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="audit" /><span className="sb-item-label">Audit log</span></div>
+            <div className="sb-item" style={{ opacity: 0.6 }}><Icon name="email" /><span className="sb-item-label">Email logs</span></div>
           </div>
           <div>
             <p className="sb-label">Configure</p>
@@ -210,6 +212,7 @@ function sectionTitle(pathname: string): string {
   if (pathname.includes("/admin")) return "Configuration";
   if (pathname.includes("/reports")) return "Reports";
   if (pathname.includes("/users")) return "People";
+  if (pathname.includes("/email-logs")) return "Email delivery logs";
   if (pathname.includes("/audit")) return "Audit log";
   if (/\/tickets\/[^/]+/.test(pathname)) return "Ticket";
   return "Tickets";
@@ -321,6 +324,7 @@ function TenantLayout() {
       items: [
         ...(can("reports.view") ? [makeItem("reports", "Reports", "reports")] : []),
         ...(can("audit.view") ? [makeItem("audit", "Audit log", "audit")] : []),
+        ...(can("audit.view") || can("config.manage") ? [makeItem("email-logs", "Email logs", "email")] : []),
       ],
     },
     {
@@ -606,6 +610,7 @@ export function App() {
         <Route path="reports" element={<ReportsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="audit" element={<AuditLogPage />} />
+        <Route path="email-logs" element={<EmailLogsPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

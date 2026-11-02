@@ -1,17 +1,26 @@
+import { copyFile, mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import {
   addBusinessMinutes,
+  businessMinutesBetween,
+  DEFAULT_NOTIFICATION_TEMPLATES,
   INVERSE_LINK_TYPES,
   renderTemplate,
+  shiftedSlaDue,
+  slaWarnDue,
+  stagePausesResolution,
   type BusinessHoursConfig,
   type Role,
   type Stage,
   type TicketLinkType,
 } from "@opspilot/core";
+import { env } from "../env.js";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
 import { requestFeedback } from "./feedback.js";
+import { previewRoute } from "./routing.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import {
   filterVisibleCustomFields,
@@ -46,6 +55,8 @@ export type TicketRow = {
   sla_resolution_breached_at: Date | null;
   sla_response_warning_at: Date | null;
   sla_resolution_warning_at: Date | null;
+  sla_response_warn_due_at: Date | null;
+  sla_resolution_warn_due_at: Date | null;
   sla_paused_at: Date | null;
   pending_chaser_sent_at: Date | null;
   merged_into_ticket_id: string | null;
@@ -73,6 +84,7 @@ const ticketSelect = `
          t.sla_policy_id, t.sla_response_due_at, t.sla_resolution_due_at,
          t.sla_response_breached_at, t.sla_resolution_breached_at,
          t.sla_response_warning_at, t.sla_resolution_warning_at,
+         t.sla_response_warn_due_at, t.sla_resolution_warn_due_at,
          t.sla_paused_at, t.pending_chaser_sent_at,
          t.merged_into_ticket_id,
          t.created_at, t.updated_at,
@@ -110,8 +122,12 @@ async function notifyFromTemplate(
      where tenant_id = $1 and key = $2 and is_active`,
     [tenantId, templateKey],
   );
-  const row = template.rows[0];
-  if (!row) return;
+  let row = template.rows[0];
+  if (!row) {
+    const fallback = DEFAULT_NOTIFICATION_TEMPLATES.find((t) => t.key === templateKey);
+    if (!fallback) return;
+    row = fallback;
+  }
 
   await client.query(
     `insert into notifications
@@ -166,6 +182,11 @@ async function hasReadAccess(
   if (role === "tenant_admin") return true;
   if (role === "employee") {
     if (ticket.requester_id === userId) return true;
+    const participant = await client.query(
+      "select 1 from ticket_participants where tenant_id = $1 and ticket_id = $2 and user_id = $3",
+      [ticket.tenant_id, ticket.id, userId],
+    );
+    if ((participant.rowCount ?? 0) > 0) return true;
     const mergedParticipant = await client.query(
       "select 1 from tickets where tenant_id = $1 and merged_into_ticket_id = $2 and requester_id = $3",
       [ticket.tenant_id, ticket.id, userId],
@@ -173,8 +194,7 @@ async function hasReadAccess(
     return (mergedParticipant.rowCount ?? 0) > 0;
   }
   if (ticket.assignee_id === userId) return true;
-  if (await isTeamMember(client, ticket.tenant_id, userId, ticket.team_id)) return true;
-  return !ticket.assignee_id && !ticket.team_id;
+  return isTeamMember(client, ticket.tenant_id, userId, ticket.team_id);
 }
 
 export async function assertCanRead(
@@ -191,7 +211,7 @@ export type TicketListInput = {
   priority?: string;
   assignee?: "me" | "none";
   state?: "open" | "closed";
-  sort?: "priority" | "updated";
+  sort?: "priority" | "updated" | "due";
   q?: string;
   limit: number;
   offset: number;
@@ -209,14 +229,20 @@ export async function listTickets(
   let index = 2;
 
   if (role === "employee") {
-    conditions.push(`t.requester_id = $${index++}`);
+    conditions.push(
+      `(t.requester_id = $${index} or exists (
+        select 1 from ticket_participants p
+        where p.tenant_id = t.tenant_id and p.ticket_id = t.id and p.user_id = $${index}
+      ))`,
+    );
     params.push(userId);
+    index += 1;
   } else if (role === "agent") {
     conditions.push(
       `(t.assignee_id = $${index} or exists (
         select 1 from team_members tm
         where tm.tenant_id = t.tenant_id and tm.user_id = $${index} and tm.team_id = t.team_id
-      ) or (t.assignee_id is null and t.team_id is null))`,
+      ))`,
     );
     params.push(userId);
     index += 1;
@@ -272,7 +298,12 @@ export async function listTickets(
   params.push(input.limit, input.offset);
   const limitIndex = index;
   const offsetIndex = index + 1;
-  const orderBy = input.sort === "updated" ? "t.updated_at desc" : "p.rank asc, t.created_at desc";
+  const orderBy =
+    input.sort === "updated"
+      ? "t.updated_at desc"
+      : input.sort === "priority"
+        ? "p.rank asc, t.created_at desc"
+        : "least(coalesce(t.sla_response_due_at, 'infinity'), coalesce(t.sla_resolution_due_at, 'infinity')) asc, p.rank asc, t.created_at asc";
 
   const result = await client.query<TicketListRow>(
     `${ticketListSelect}
@@ -289,6 +320,29 @@ export async function listTickets(
     items,
     total: result.rows[0] ? Number(result.rows[0].total_count) : 0,
   };
+}
+
+function nextSlaClock(input: {
+  stopped: boolean;
+  currentDue: Date | null;
+  currentWarn: Date | null;
+  oldMinutes: number;
+  newMinutes: number | null;
+  clock: Date;
+  createdAt: Date;
+  config?: BusinessHoursConfig;
+}): { due: Date | null; warn: Date | null } {
+  if (input.stopped) return { due: input.currentDue, warn: input.currentWarn };
+  if (input.newMinutes == null) return { due: null, warn: null };
+  const hadTarget = input.currentDue !== null;
+  const shift = {
+    oldDue: hadTarget ? input.currentDue : null,
+    oldMinutes: hadTarget ? input.oldMinutes : 0,
+    newMinutes: input.newMinutes,
+    clock: hadTarget ? input.clock : input.createdAt,
+    config: input.config,
+  };
+  return { due: shiftedSlaDue(shift), warn: slaWarnDue(shift) };
 }
 
 export async function getBusinessHoursConfig(
@@ -308,6 +362,10 @@ export async function getBusinessHoursConfig(
   );
   const row = settings.rows[0];
   if (!row) return undefined;
+  const holidays = await client.query<{ holiday_on: string }>(
+    "select to_char(holiday_on, 'YYYY-MM-DD') as holiday_on from tenant_holidays where tenant_id = $1",
+    [tenantId],
+  );
   const [sh = 9, sm = 0] = (row.business_hours_start || "09:00").split(":").map(Number);
   const [eh = 17, em = 0] = (row.business_hours_end || "17:00").split(":").map(Number);
   return {
@@ -317,6 +375,7 @@ export async function getBusinessHoursConfig(
     endMinute: em,
     businessDays: row.business_days || [1, 2, 3, 4, 5],
     timeZone: row.timezone || "UTC",
+    holidays: holidays.rows.map((holiday) => holiday.holiday_on),
   };
 }
 
@@ -329,7 +388,6 @@ export async function createTicket(
     subject: string;
     description: string;
     categoryId: string;
-    priorityId: string;
     customFields: Record<string, unknown>;
   },
   correlationId: string,
@@ -340,13 +398,28 @@ export async function createTicket(
   ]);
   if ((category.rowCount ?? 0) === 0) return badRequest("Unknown category");
 
-  const priority = await client.query("select 1 from priorities where tenant_id = $1 and id = $2 and is_active", [
-    tenantId,
-    input.priorityId,
-  ]);
-  if ((priority.rowCount ?? 0) === 0) return badRequest("Unknown priority");
+  const priority = await client.query<{ id: string }>(
+    `select coalesce(
+       (select p.id from priorities p
+        where p.tenant_id = c.tenant_id and p.id = c.default_priority_id and p.is_active),
+       (select p.id from priorities p
+        where p.tenant_id = $1 and p.is_active
+        order by p.rank desc, p.key
+        limit 1)
+     ) as id
+     from categories c
+     where c.tenant_id = $1 and c.id = $2`,
+    [tenantId, input.categoryId],
+  );
+  const priorityId = priority.rows[0]?.id;
+  if (!priorityId) return badRequest("Unknown priority");
 
   const customFields = await validateCustomFields(client, tenantId, input.categoryId, input.customFields, role);
+  const route = await previewRoute(client, tenantId, {
+    categoryId: input.categoryId,
+    priorityId,
+    customFields,
+  });
 
   const newStatus = await getStatusByStage(client, tenantId, "new");
   if (!newStatus) throw new Error("Tenant has no new status");
@@ -374,7 +447,7 @@ export async function createTicket(
        and (category_id is null or category_id = $3)
      order by (category_id is not null) desc, (priority_id is not null) desc, created_at
      limit 1`,
-    [tenantId, input.priorityId, input.categoryId],
+    [tenantId, priorityId, input.categoryId],
   );
   const slaPolicy = sla.rows[0];
   const bhConfig = slaPolicy?.business_hours_only
@@ -387,13 +460,25 @@ export async function createTicket(
   const resolutionDueAt = slaPolicy?.resolution_minutes
     ? addBusinessMinutes(now, slaPolicy.resolution_minutes, bhConfig)
     : null;
+  const responseWarnAt = slaPolicy?.response_minutes
+    ? slaWarnDue({ oldDue: null, oldMinutes: 0, newMinutes: slaPolicy.response_minutes, clock: now, config: bhConfig })
+    : null;
+  const resolutionWarnAt = slaPolicy?.resolution_minutes
+    ? slaWarnDue({
+        oldDue: null,
+        oldMinutes: 0,
+        newMinutes: slaPolicy.resolution_minutes,
+        clock: now,
+        config: bhConfig,
+      })
+    : null;
 
   const id = randomUUID();
   await client.query(
     `insert into tickets
-      (tenant_id, id, number, subject, description, requester_id, category_id, priority_id, status_id, custom_fields,
-       sla_policy_id, sla_response_due_at, sla_resolution_due_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      (tenant_id, id, number, subject, description, requester_id, team_id, category_id, priority_id, status_id, custom_fields,
+       sla_policy_id, sla_response_due_at, sla_resolution_due_at, sla_response_warn_due_at, sla_resolution_warn_due_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       tenantId,
       id,
@@ -401,15 +486,27 @@ export async function createTicket(
       input.subject,
       input.description,
       userId,
+      route?.teamId ?? null,
       input.categoryId,
-      input.priorityId,
+      priorityId,
       newStatus.id,
       JSON.stringify(customFields),
       slaPolicy?.id ?? null,
       responseDueAt,
       resolutionDueAt,
+      responseWarnAt,
+      resolutionWarnAt,
     ],
   );
+
+  if (route) {
+    await client.query(
+      `insert into ticket_assignment_history
+        (tenant_id, ticket_id, to_team_id, actor_id, actor_role, source)
+       values ($1, $2, $3, $4, 'system', 'automation')`,
+      [tenantId, id, route.teamId, userId],
+    );
+  }
 
   await client.query(
     `insert into ticket_status_history
@@ -426,7 +523,12 @@ export async function createTicket(
     "ticket",
     id,
     null,
-    { subject: input.subject, categoryId: input.categoryId, priorityId: input.priorityId },
+    {
+      subject: input.subject,
+      categoryId: input.categoryId,
+      priorityId,
+      teamId: route?.teamId ?? null,
+    },
     correlationId,
   );
 
@@ -435,7 +537,8 @@ export async function createTicket(
     number,
     subject: input.subject,
     categoryId: input.categoryId,
-    priorityId: input.priorityId,
+    priorityId,
+    teamId: route?.teamId ?? null,
     requesterId: userId,
     customFields,
   });
@@ -512,8 +615,10 @@ export async function updateTicket(
 
   const slaChanged = categoryId !== ticket.category_id || priorityId !== ticket.priority_id;
   let slaPolicyId: string | null = null;
-  let responseDueAt: Date | null = null;
-  let resolutionDueAt: Date | null = null;
+  let responseDueAt: Date | null = ticket.sla_response_due_at;
+  let resolutionDueAt: Date | null = ticket.sla_resolution_due_at;
+  let responseWarnAt: Date | null = ticket.sla_response_warn_due_at;
+  let resolutionWarnAt: Date | null = ticket.sla_resolution_warn_due_at;
   if (slaChanged) {
     const sla = await client.query<{
       id: string;
@@ -532,14 +637,55 @@ export async function updateTicket(
     );
     const policy = sla.rows[0];
     slaPolicyId = policy?.id ?? null;
-    if (policy) {
-      const bhConfig = policy.business_hours_only
-        ? await getBusinessHoursConfig(client, tenantId)
-        : undefined;
-      const baseDate = new Date(ticket.created_at);
-      responseDueAt = addBusinessMinutes(baseDate, policy.response_minutes, bhConfig);
-      resolutionDueAt = addBusinessMinutes(baseDate, policy.resolution_minutes, bhConfig);
-    }
+    const previous = ticket.sla_policy_id
+      ? await client.query<{
+          response_minutes: number;
+          resolution_minutes: number;
+          business_hours_only: boolean;
+        }>(
+          `select response_minutes, resolution_minutes, coalesce(business_hours_only, false) as business_hours_only
+           from sla_policies where tenant_id = $1 and id = $2`,
+          [tenantId, ticket.sla_policy_id],
+        )
+      : { rows: [] };
+    const oldPolicy = previous.rows[0];
+    const bhConfig = policy?.business_hours_only || oldPolicy?.business_hours_only
+      ? await getBusinessHoursConfig(client, tenantId)
+      : undefined;
+    const createdAt = new Date(ticket.created_at);
+    const clock = ticket.sla_paused_at ?? new Date();
+    const responseClock = nextSlaClock({
+      stopped: ticket.first_responded_at !== null,
+      currentDue: ticket.sla_response_due_at,
+      currentWarn: ticket.sla_response_warn_due_at,
+      oldMinutes:
+        oldPolicy?.response_minutes ??
+        (ticket.sla_response_due_at
+          ? businessMinutesBetween(createdAt, ticket.sla_response_due_at, bhConfig)
+          : 0),
+      newMinutes: policy?.response_minutes ?? null,
+      clock,
+      createdAt,
+      config: policy?.business_hours_only ? bhConfig : undefined,
+    });
+    const resolutionClock = nextSlaClock({
+      stopped: ticket.resolved_at !== null || ticket.closed_at !== null,
+      currentDue: ticket.sla_resolution_due_at,
+      currentWarn: ticket.sla_resolution_warn_due_at,
+      oldMinutes:
+        oldPolicy?.resolution_minutes ??
+        (ticket.sla_resolution_due_at
+          ? businessMinutesBetween(createdAt, ticket.sla_resolution_due_at, bhConfig)
+          : 0),
+      newMinutes: policy?.resolution_minutes ?? null,
+      clock,
+      createdAt,
+      config: policy?.business_hours_only ? bhConfig : undefined,
+    });
+    responseDueAt = responseClock.due;
+    responseWarnAt = responseClock.warn;
+    resolutionDueAt = resolutionClock.due;
+    resolutionWarnAt = resolutionClock.warn;
   }
 
   const updated = await client.query(
@@ -552,11 +698,11 @@ export async function updateTicket(
        sla_policy_id = case when $8 then $9 else sla_policy_id end,
        sla_response_due_at = case when $8 then $10 else sla_response_due_at end,
        sla_resolution_due_at = case when $8 then $11 else sla_resolution_due_at end,
-       sla_response_breached_at = case when $8 then null else sla_response_breached_at end,
-       sla_resolution_breached_at = case when $8 then null else sla_resolution_breached_at end,
+       sla_response_warn_due_at = case when $8 then $12 else sla_response_warn_due_at end,
+       sla_resolution_warn_due_at = case when $8 then $13 else sla_resolution_warn_due_at end,
        version = version + 1,
        updated_at = now()
-     where tenant_id = $1 and id = $2 and version = $12`,
+     where tenant_id = $1 and id = $2 and version = $14`,
     [
       tenantId,
       ticketId,
@@ -569,6 +715,8 @@ export async function updateTicket(
       slaPolicyId,
       responseDueAt,
       resolutionDueAt,
+      responseWarnAt,
+      resolutionWarnAt,
       input.expectedVersion,
     ],
   );
@@ -642,7 +790,7 @@ export async function deleteTicket(
   });
 }
 
-type StatusRef = { id: string; key: string; label: string; stage: Stage };
+type StatusRef = { id: string; key: string; label: string; stage: Stage; pauses_sla: boolean };
 
 async function getStatusByStage(
   client: pg.PoolClient,
@@ -650,7 +798,7 @@ async function getStatusByStage(
   stage: Stage,
 ): Promise<StatusRef | null> {
   const result = await client.query<StatusRef>(
-    "select id, key, label, stage from ticket_statuses where tenant_id = $1 and stage = $2 and is_active order by sort_order limit 1",
+    "select id, key, label, stage, pauses_sla from ticket_statuses where tenant_id = $1 and stage = $2 and is_active order by sort_order limit 1",
     [tenantId, stage],
   );
   return result.rows[0] ?? null;
@@ -726,7 +874,7 @@ export async function applyTransition(
   if (ticket.version !== input.expectedVersion) conflict("Ticket changed; reload and try again");
 
   const target = await client.query<StatusRef>(
-    "select id, key, label, stage from ticket_statuses where tenant_id = $1 and id = $2 and is_active",
+    "select id, key, label, stage, pauses_sla from ticket_statuses where tenant_id = $1 and id = $2 and is_active",
     [tenantId, input.toStatusId],
   );
   const targetStatus = target.rows[0];
@@ -782,10 +930,14 @@ export async function applyTransition(
                                   else sla_response_due_at end,
        sla_resolution_due_at = case when $9 then sla_resolution_due_at + (now() - sla_paused_at)
                                     else sla_resolution_due_at end,
-       sla_paused_at = case when $4 = 'pending' then coalesce(sla_paused_at, now())
+       sla_response_warn_due_at = case when $9 then sla_response_warn_due_at + (now() - sla_paused_at)
+                                       else sla_response_warn_due_at end,
+       sla_resolution_warn_due_at = case when $9 then sla_resolution_warn_due_at + (now() - sla_paused_at)
+                                         else sla_resolution_warn_due_at end,
+       sla_paused_at = case when $10 then coalesce(sla_paused_at, now())
                             when $9 then null
                             else sla_paused_at end,
-       pending_chaser_sent_at = case when $4 = 'pending' then null
+       pending_chaser_sent_at = case when $10 then null
                                      when $9 then null
                                      else pending_chaser_sent_at end,
        reopened_count = reopened_count + case when $7 then 1 else 0 end,
@@ -801,7 +953,8 @@ export async function applyTransition(
       input.reason ?? null,
       reopening,
       input.expectedVersion,
-      ticket.sla_paused_at !== null && targetStatus.stage !== "pending",
+      ticket.sla_paused_at !== null && !stagePausesResolution(targetStatus.pauses_sla),
+      stagePausesResolution(targetStatus.pauses_sla),
     ],
   );
   if ((updated.rowCount ?? 0) === 0) conflict("Ticket changed; reload and try again");
@@ -981,13 +1134,87 @@ export async function assignTicket(
   return refreshed;
 }
 
+export async function claimTicket(
+  client: pg.PoolClient,
+  tenantId: string,
+  userId: string,
+  role: Role,
+  ticketId: string,
+  expectedVersion: number,
+  correlationId: string,
+): Promise<TicketRow> {
+  const ticket = await loadTicket(client, tenantId, ticketId, true);
+  if (!ticket) notFound();
+  if (role === "employee") badRequest("Employees cannot claim tickets");
+  await assertCanRead(client, ticket, userId, role);
+  if (!ticket.team_id) badRequest("Route the ticket to a team before claiming it");
+  if (role === "agent" && !(await isTeamMember(client, tenantId, userId, ticket.team_id))) {
+    badRequest("You can only claim tickets for your team");
+  }
+  if (ticket.version !== expectedVersion) conflict("Ticket changed; reload and try again");
+  if (ticket.assignee_id) conflict("Ticket is already claimed");
+
+  let nextStatusId = ticket.status_id;
+  if (ticket.status_stage === "new") {
+    const openStatus = await getStatusByStage(client, tenantId, "open");
+    if (!openStatus) throw new Error("Tenant has no open status");
+    nextStatusId = openStatus.id;
+  }
+
+  const updated = await client.query(
+    `update tickets set assignee_id = $3, status_id = $4, version = version + 1, updated_at = now()
+     where tenant_id = $1 and id = $2 and assignee_id is null and version = $5`,
+    [tenantId, ticketId, userId, nextStatusId, expectedVersion],
+  );
+  if ((updated.rowCount ?? 0) === 0) {
+    const current = await loadTicket(client, tenantId, ticketId);
+    if (current?.assignee_id) conflict("Ticket is already claimed");
+    conflict("Ticket changed; reload and try again");
+  }
+
+  await client.query(
+    `insert into ticket_assignment_history
+      (tenant_id, ticket_id, from_assignee_id, to_assignee_id, from_team_id, to_team_id, actor_id, actor_role, source)
+     values ($1, $2, null, $3, $4, $4, $3, $5, 'manual')`,
+    [tenantId, ticketId, userId, ticket.team_id, role],
+  );
+  if (nextStatusId !== ticket.status_id) {
+    await client.query(
+      `insert into ticket_status_history
+        (tenant_id, ticket_id, from_status_id, to_status_id, actor_id, actor_role, reason)
+       values ($1, $2, $3, $4, $5, $6, 'Claimed')`,
+      [tenantId, ticketId, ticket.status_id, nextStatusId, userId, role],
+    );
+  }
+  await writeAudit(
+    client,
+    tenantId,
+    { id: userId, role },
+    "ticket.claimed",
+    "ticket",
+    ticketId,
+    { assigneeId: null, teamId: ticket.team_id },
+    { assigneeId: userId, teamId: ticket.team_id },
+    correlationId,
+  );
+  const refreshed = await loadTicket(client, tenantId, ticketId);
+  if (!refreshed) throw new Error("Ticket disappeared after claim");
+  await enqueueEvent(client, tenantId, "ticket", ticketId, refreshed.version, "ticket.assigned", {
+    ticketId,
+    teamId: ticket.team_id,
+    assigneeId: userId,
+    actorRole: role,
+  });
+  return refreshed;
+}
+
 export async function addComment(
   client: pg.PoolClient,
   tenantId: string,
   userId: string,
   role: Role,
   ticketId: string,
-  input: { body: string; visibility: "public" | "internal" },
+  input: { body: string; visibility: "public" | "internal"; countsAsFirstResponse?: boolean },
   correlationId: string,
 ): Promise<{
   id: string;
@@ -1008,7 +1235,12 @@ export async function addComment(
     [tenantId, id, ticketId, userId, input.body, input.visibility],
   );
 
-  if ((role === "agent" || role === "tenant_admin") && input.visibility === "public" && !ticket.first_responded_at) {
+  if (
+    input.countsAsFirstResponse &&
+    (role === "agent" || role === "tenant_admin") &&
+    input.visibility === "public" &&
+    !ticket.first_responded_at
+  ) {
     await client.query(
       "update tickets set first_responded_at = now(), version = version + 1, updated_at = now() where tenant_id = $1 and id = $2",
       [tenantId, ticketId],
@@ -1140,6 +1372,9 @@ export async function ticketDetail(
          or a.action = 'ticket.merged'
          or a.action = 'ticket.link_created'
          or a.action = 'ticket.link_deleted'
+         or a.action = 'ticket.sla_escalated'
+         or a.action = 'ticket.sla_response_warning'
+         or a.action = 'ticket.sla_resolution_warning'
          or (a.action = 'ticket.sla_response_breached' and t.sla_response_breached_at is not null)
          or (a.action = 'ticket.sla_resolution_breached' and t.sla_resolution_breached_at is not null)
        )
@@ -1179,6 +1414,15 @@ export async function ticketDetail(
     }
   }
 
+  const participants = await client.query<{ id: string; display_name: string; email: string }>(
+    `select u.id, u.display_name, u.email
+     from ticket_participants tp
+     join users u on u.id = tp.user_id
+     where tp.tenant_id = $1 and tp.ticket_id = $2
+     order by tp.created_at`,
+    [tenantId, ticketId],
+  );
+
   return {
     ...ticket,
     custom_fields: customFields,
@@ -1190,6 +1434,7 @@ export async function ticketDetail(
     allowed_transitions: transitions,
     links,
     merged_into: mergedIntoTicket,
+    participants: participants.rows,
   };
 }
 
@@ -1451,11 +1696,12 @@ export async function mergeTickets(
     number: number;
     subject: string;
     description: string;
+    requester_id: string;
     requester_name: string;
     merged_into_ticket_id: string | null;
     status_id: string;
   }>(
-    `select t.id, t.number, t.subject, t.description, req.display_name as requester_name, t.merged_into_ticket_id, t.status_id
+    `select t.id, t.number, t.subject, t.description, t.requester_id, req.display_name as requester_name, t.merged_into_ticket_id, t.status_id
      from tickets t
      join users req on req.id = t.requester_id
      where t.tenant_id = $1 and t.number = $2 and t.deleted_at is null`,
@@ -1481,6 +1727,7 @@ export async function mergeTickets(
     number: number;
     subject: string;
     description: string;
+    requester_id: string;
     requester_name: string;
     merged_into_ticket_id: string | null;
     status_id: string;
@@ -1592,6 +1839,62 @@ export async function mergeTickets(
     );
   }
 
+  // Copy attachments from secondary to primary
+  const secAttachments = await client.query<{
+    id: string;
+    uploader_id: string;
+    filename: string;
+    content_type: string;
+    size: number;
+    storage_key: string;
+    created_at: Date;
+  }>(
+    `select id, uploader_id, filename, content_type, size, storage_key, created_at
+     from ticket_attachments
+     where tenant_id = $1 and ticket_id = $2`,
+    [tenantId, secondary.id],
+  );
+
+  for (const att of secAttachments.rows) {
+    const newId = randomUUID();
+    const newStorageKey = `${tenantId}/${primary.id}/${randomUUID()}_${att.filename}`;
+    const oldPath = resolve(env.UPLOAD_DIR, att.storage_key);
+    const newPath = resolve(env.UPLOAD_DIR, newStorageKey);
+    try {
+      await mkdir(dirname(newPath), { recursive: true });
+      await copyFile(oldPath, newPath);
+    } catch {
+      // Source file may not exist on disk in test environments
+    }
+    await client.query(
+      `insert into ticket_attachments
+        (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [tenantId, newId, primary.id, att.uploader_id, att.filename, att.content_type, att.size, newStorageKey, att.created_at],
+    );
+  }
+
+  // Add secondary requester and existing participants as participants on primary
+  await client.query(
+    `insert into ticket_participants (tenant_id, ticket_id, user_id)
+     values ($1, $2, $3)
+     on conflict (tenant_id, ticket_id, user_id) do nothing`,
+    [tenantId, primary.id, secondary.requester_id],
+  );
+
+  const secParticipants = await client.query<{ user_id: string }>(
+    `select user_id from ticket_participants where tenant_id = $1 and ticket_id = $2`,
+    [tenantId, secondary.id],
+  );
+  for (const part of secParticipants.rows) {
+    await client.query(
+      `insert into ticket_participants (tenant_id, ticket_id, user_id)
+       values ($1, $2, $3)
+       on conflict (tenant_id, ticket_id, user_id) do nothing`,
+      [tenantId, primary.id, part.user_id],
+    );
+  }
+
   const secCommentBody = `This ticket was merged into #${primary.number} ("${primary.subject}") by ${actorName}.${input.reason ? `\n\nReason: ${input.reason}` : ""}`;
   await addComment(
     client,
@@ -1599,7 +1902,7 @@ export async function mergeTickets(
     userId,
     role,
     secondary.id,
-    { body: secCommentBody, visibility: "public" },
+    { body: secCommentBody, visibility: "internal", countsAsFirstResponse: false },
     correlationId,
   );
 
@@ -1613,7 +1916,7 @@ export async function mergeTickets(
     userId,
     role,
     primary.id,
-    { body: primCommentBody, visibility: "internal" },
+    { body: primCommentBody, visibility: "internal", countsAsFirstResponse: false },
     correlationId,
   );
 
@@ -1651,7 +1954,7 @@ export async function mergeTickets(
     correlationId,
   );
 
-  await enqueueEvent(client, tenantId, "ticket", secondary.id, 0, "ticket.merged", {
+  const secEventId = await enqueueEvent(client, tenantId, "ticket", secondary.id, 0, "ticket.merged", {
     ticketId: secondary.id,
     mergedIntoTicketId: primary.id,
     mergedIntoTicketNumber: primary.number,
@@ -1661,6 +1964,13 @@ export async function mergeTickets(
     ticketId: primary.id,
     secondaryTicketId: secondary.id,
     secondaryTicketNumber: secondary.number,
+  });
+
+  await notifyFromTemplate(client, tenantId, secEventId, primary.id, secondary.requester_id, "ticket_merged", {
+    number: primary.number,
+    subject: primary.subject,
+    secondaryNumber: secondary.number,
+    secondarySubject: secondary.subject,
   });
 
   return {

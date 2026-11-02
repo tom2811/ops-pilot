@@ -300,16 +300,6 @@ export async function processInboundEmail(
   const categoryId = catRes.rows[0]?.id;
   if (!categoryId) throw new Error("Workspace has no active categories");
 
-  const priRes = await client.query<{ id: string }>(
-    `select id from priorities
-     where tenant_id = $1 and is_active
-     order by case when key = 'p3' then 0 else 1 end, rank asc
-     limit 1`,
-    [tenantId],
-  );
-  const priorityId = priRes.rows[0]?.id;
-  if (!priorityId) throw new Error("Workspace has no active priorities");
-
   // Populate any required custom fields with defaults
   const customFieldDefs = await client.query<{
     key: string;
@@ -351,7 +341,6 @@ export async function processInboundEmail(
       subject: cleanSubject.slice(0, 200) || "No subject",
       description: cleanBody.slice(0, 20000) || "(No content)",
       categoryId,
-      priorityId,
       customFields,
     },
     correlationId,

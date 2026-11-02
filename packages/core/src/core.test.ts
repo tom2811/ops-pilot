@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   addBusinessMinutes,
+  businessMinutesBetween,
+  shiftedSlaDue,
   cleanEmailBody,
   createTicketLinkSchema,
   formatTicketNumber,
@@ -11,6 +13,7 @@ import {
   parseEmailAddress,
   parseTicketNumberFromSubject,
   renderTemplate,
+  stagePausesResolution,
 } from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
@@ -60,6 +63,13 @@ describe("formatTicketNumber", () => {
   it("pads ticket numbers", () => {
     expect(formatTicketNumber("ACM", 42)).toBe("ACM-000042");
     expect(formatTicketNumber("GLX", "7")).toBe("GLX-000007");
+  });
+});
+
+describe("stagePausesResolution", () => {
+  it("pauses only when the status flag is set", () => {
+    expect(stagePausesResolution(true)).toBe(true);
+    expect(stagePausesResolution(false)).toBe(false);
   });
 });
 
@@ -177,6 +187,61 @@ describe("addBusinessMinutes", () => {
     const start = new Date("2026-10-30T16:30:00Z");
     const result = addBusinessMinutes(start, 60, { ...config, startHour: 17, endHour: 9 });
     expect(result.toISOString()).toBe("2026-10-30T17:30:00.000Z");
+  });
+
+  it("skips a holiday the same way it skips a weekend", () => {
+    const start = new Date("2026-10-26T10:00:00Z");
+    const result = addBusinessMinutes(start, 60, { ...config, holidays: ["2026-10-26"] });
+    expect(result.toISOString()).toBe("2026-10-27T10:00:00.000Z");
+  });
+
+  it("counts the same minutes it adds", () => {
+    const start = new Date("2026-10-26T16:00:00Z");
+    const end = addBusinessMinutes(start, 120, config);
+    expect(businessMinutesBetween(start, end, config)).toBe(120);
+  });
+});
+
+describe("shiftedSlaDue", () => {
+  const hours = {
+    startHour: 9,
+    startMinute: 0,
+    endHour: 17,
+    endMinute: 0,
+    businessDays: [1, 2, 3, 4, 5],
+  };
+
+  it("keeps time already spent when the target gets longer", () => {
+    const clock = new Date("2026-10-26T11:00:00Z");
+    const due = shiftedSlaDue({
+      oldDue: new Date("2026-10-26T12:00:00Z"),
+      oldMinutes: 120,
+      newMinutes: 180,
+      clock,
+      config: hours,
+    });
+    expect(due?.toISOString()).toBe("2026-10-26T13:00:00.000Z");
+  });
+
+  it("does not restart an overdue clock from now", () => {
+    const oldDue = new Date("2026-10-26T10:00:00Z");
+    const same = shiftedSlaDue({
+      oldDue,
+      oldMinutes: 60,
+      newMinutes: 60,
+      clock: new Date("2026-10-26T11:00:00Z"),
+      config: hours,
+    });
+    expect(same?.toISOString()).toBe(oldDue.toISOString());
+
+    const longer = shiftedSlaDue({
+      oldDue,
+      oldMinutes: 60,
+      newMinutes: 120,
+      clock: new Date("2026-10-26T11:00:00Z"),
+      config: hours,
+    });
+    expect(longer?.toISOString()).toBe("2026-10-26T11:00:00.000Z");
   });
 });
 

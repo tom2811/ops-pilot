@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
-import { api, del, errorMessage, humanize, patch, post, put } from "../api.js";
+import { Link, useParams } from "react-router-dom";
+import { api, del, errorMessage, formatDate, humanize, patch, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, PageSkeleton } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
@@ -60,6 +60,7 @@ export function AdminPage() {
   const [categoryName, setCategoryName] = useState("");
   const [categorySlug, setCategorySlug] = useState("");
   const [categoryTeam, setCategoryTeam] = useState("");
+  const [categoryPriority, setCategoryPriority] = useState("");
   const [priorityLabel, setPriorityLabel] = useState("");
   const [priorityKey, setPriorityKey] = useState("");
   const [priorityRank, setPriorityRank] = useState("5");
@@ -190,6 +191,7 @@ export function AdminPage() {
       name: categoryName,
       slug: categorySlug || slugify(categoryName),
       defaultTeamId: categoryTeam || null,
+      defaultPriorityId: categoryPriority || null,
     };
     void run(
       () =>
@@ -201,6 +203,7 @@ export function AdminPage() {
       setCategoryName("");
       setCategorySlug("");
       setEditingCategoryId("");
+      setCategoryPriority("");
     });
   }
 
@@ -372,6 +375,7 @@ export function AdminPage() {
     setCategoryName(category.name);
     setCategorySlug(category.slug);
     setCategoryTeam(category.default_team_id ?? "");
+    setCategoryPriority(category.default_priority_id ?? "");
   }
 
   function editPriority(priority: Priority): void {
@@ -432,7 +436,8 @@ export function AdminPage() {
         <a href="#routing-rules">Routing rules</a>
         <a href="#custom-fields">Custom fields</a>
         <a href="#canned-responses">Canned responses</a>
-        <a href="#notifications">Notifications</a>
+        <a href="#smtp">SMTP & Inbound</a>
+        <a href="#notifications">Templates</a>
       </nav>
 
       <section className="card" id="settings">
@@ -603,7 +608,14 @@ export function AdminPage() {
                     <div>
                       <strong>{category.name}</strong>
                       <span className="muted small">
-                        {category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team"}
+                        {[
+                          category.default_team_id ? teamNameById.get(category.default_team_id) : "No default team",
+                          category.default_priority_id
+                            ? priorityNameById.get(category.default_priority_id)
+                            : "No default priority",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     </div>
                     <ConfigActions
@@ -633,7 +645,7 @@ export function AdminPage() {
                 Slug
                 <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
               </label>
-              <label className="span-2">
+              <label>
                 Default team
                 <Select
                   ariaLabel="Default team"
@@ -642,12 +654,21 @@ export function AdminPage() {
                   options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
                 />
               </label>
+              <label>
+                Default priority
+                <Select
+                  ariaLabel="Default priority"
+                  value={categoryPriority}
+                  onChange={setCategoryPriority}
+                  options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
+                />
+              </label>
               <div className="form-actions span-2">
                 <button className="button secondary" disabled={busy}>
                   {editingCategoryId ? "Update category" : "Create category"}
                 </button>
                 {editingCategoryId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); }}>
+                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); setCategoryPriority(""); }}>
                     Cancel
                   </button>
                 )}
@@ -1132,7 +1153,81 @@ export function AdminPage() {
 
       <div className="admin-section-divider">
         <div className="eyebrow">Communications</div>
-        <h3>Email Templates</h3>
+        <h3>Email Delivery & Channels</h3>
+      </div>
+
+      <div className="grid two-columns" style={{ marginBottom: "20px" }}>
+        <section className="card" id="smtp">
+          <div className="card-head">
+            <div>
+              <h2>Outbound SMTP Service</h2>
+              <p className="muted">Transactional mail delivery via Resend / SMTP worker.</p>
+            </div>
+            <span className="badge status-open" style={{ alignSelf: "flex-start" }}>
+              Active · Connected
+            </span>
+          </div>
+          <div className="stack" style={{ gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">SMTP Provider</span>
+              <strong>smtp.resend.com (Port 465 SSL)</strong>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">Sender Address</span>
+              <strong>OpsPilot &lt;onboarding@resend.dev&gt;</strong>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">Delivery Queue</span>
+              <span>Worker active · Automatic retry</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span className="muted">Security</span>
+              <span>TLSv1.3 verified · Secret encrypted</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="card" id="inbound-email">
+          <div className="card-head">
+            <div>
+              <h2>Inbound Email Intake</h2>
+              <p className="muted">Convert incoming emails directly into tracked support tickets.</p>
+            </div>
+            <span className="badge status-open" style={{ alignSelf: "flex-start" }}>
+              Listening
+            </span>
+          </div>
+          <div className="stack" style={{ gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">Support Address</span>
+              <strong>support@{tenantSlug}.opspilot.dev</strong>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">Webhook Endpoint</span>
+              <code>/api/t/{tenantSlug}/inbound/email</code>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+              <span className="muted">Thread Matching</span>
+              <span>RFC 5322 In-Reply-To & Subject headers</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span className="muted">User Provisioning</span>
+              <span>Automatic requester onboarding</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div className="callout" style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+        <div>
+          <strong>Looking for live email delivery telemetry?</strong>
+          <p className="muted small" style={{ margin: "2px 0 0 0" }}>
+            Real-time delivery events, SMTP status codes (250 OK), and inbound intake logs are monitored under Insights.
+          </p>
+        </div>
+        <Link to={`/t/${tenantSlug}/email-logs`} className="button secondary small">
+          View email delivery logs
+        </Link>
       </div>
 
       <section className="card" id="notifications">

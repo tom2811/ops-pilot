@@ -17,10 +17,23 @@ export type Membership = {
   permissions: Permission[];
 };
 
-export type Team = { id: string; slug: string; name: string };
-export type Category = { id: string; slug: string; name: string; default_team_id: string | null };
+export type Team = { id: string; slug: string; name: string; lead_user_id?: string | null };
+export type Category = {
+  id: string;
+  slug: string;
+  name: string;
+  default_team_id: string | null;
+  default_priority_id: string | null;
+};
 export type Priority = { id: string; key: string; label: string; rank: number; color: string };
-export type Status = { id: string; key: string; label: string; stage: string; sort_order: number };
+export type Status = {
+  id: string;
+  key: string;
+  label: string;
+  stage: string;
+  sort_order: number;
+  pauses_sla?: boolean;
+};
 
 export type CustomField = {
   id: string;
@@ -90,6 +103,16 @@ export type CannedResponse = {
   is_active: boolean;
 };
 
+export type EscalationPolicy = {
+  id: string;
+  name: string;
+  sla_kind: "response" | "resolution";
+  threshold_percent: number;
+  target_type: "manager" | "team_lead" | "team";
+  target_team_id: string | null;
+  is_active: boolean;
+};
+
 export type Config = {
   teams: Team[];
   categories: Category[];
@@ -101,6 +124,7 @@ export type Config = {
   settings: TenantSettings | null;
   sla_policies: SlaPolicy[];
   canned_responses?: CannedResponse[];
+  escalation_policies?: EscalationPolicy[];
 };
 
 export type Ticket = {
@@ -130,6 +154,8 @@ export type Ticket = {
   sla_resolution_breached_at: string | null;
   sla_response_warning_at?: string | null;
   sla_resolution_warning_at?: string | null;
+  sla_response_warn_due_at?: string | null;
+  sla_resolution_warn_due_at?: string | null;
   sla_paused_at: string | null;
   pending_chaser_sent_at?: string | null;
   merged_into_ticket_id?: string | null;
@@ -233,6 +259,7 @@ export type TicketDetail = Ticket & {
   allowed_transitions: Transition[];
   links?: TicketLink[];
   merged_into?: { id: string; number: number; subject: string } | null;
+  participants?: { id: string; display_name: string; email: string }[];
 };
 
 export type TicketList = {
@@ -330,6 +357,8 @@ export type ReportSummary = {
   open: number;
   unassigned: number;
   sla_breached: number;
+  sla_met?: number;
+  sla_still_running?: number;
   sla_compliance_percent?: number;
   resolved_week: number;
   created_period: number;

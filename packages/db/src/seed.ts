@@ -114,8 +114,8 @@ type UserSeed = {
 };
 
 const TEAM_ASSIGNMENTS: Record<string, string[]> = {
-  "admin@acme.test": ["service-desk", "network"],
-  "agent@acme.test": ["service-desk", "network"],
+  "admin@acme.test": ["service-desk", "network", "it-ops"],
+  "agent@acme.test": ["service-desk", "network", "it-ops"],
   "admin@globex.test": ["it-ops"],
   "agent@globex.test": ["it-ops"],
 };
@@ -125,13 +125,19 @@ const users: UserSeed[] = [
     id: "00000000-0000-4000-8000-000000001001",
     email: "admin@acme.test",
     name: "Somchai Prasert",
-    memberships: [{ tenantSlug: "acme", role: "tenant_admin" }],
+    memberships: [
+      { tenantSlug: "acme", role: "tenant_admin" },
+      { tenantSlug: "globex", role: "tenant_admin" },
+    ],
   },
   {
     id: "00000000-0000-4000-8000-000000001002",
     email: "agent@acme.test",
     name: "Nattaporn Srisai",
-    memberships: [{ tenantSlug: "acme", role: "agent" }],
+    memberships: [
+      { tenantSlug: "acme", role: "agent" },
+      { tenantSlug: "globex", role: "agent" },
+    ],
   },
   {
     id: "00000000-0000-4000-8000-000000001003",
@@ -238,6 +244,10 @@ async function main() {
         const id = row.rows[0]?.id;
         if (id) priorityIdByKey.set(priority.key, id);
       }
+      await client.query(
+        "update categories set default_priority_id = $2 where tenant_id = $1 and default_priority_id is null",
+        [tenant.id, priorityIdByKey.get("p3") ?? priorityIdByKey.get("p4") ?? null],
+      );
       for (const policy of DEFAULT_SLA_POLICIES) {
         await client.query(
           `insert into sla_policies
@@ -258,8 +268,16 @@ async function main() {
         const id = randomUUID();
         statusIdByKey.set(status.key, id);
         await client.query(
-          "insert into ticket_statuses (tenant_id, id, key, label, stage, sort_order) values ($1, $2, $3, $4, $5, $6)",
-          [tenant.id, id, status.key, status.label, status.stage, status.sortOrder],
+          "insert into ticket_statuses (tenant_id, id, key, label, stage, sort_order, pauses_sla) values ($1, $2, $3, $4, $5, $6, $7)",
+          [
+            tenant.id,
+            id,
+            status.key,
+            status.label,
+            status.stage,
+            status.sortOrder,
+            status.pausesSla ?? status.stage === "pending",
+          ],
         );
       }
 
@@ -319,6 +337,13 @@ async function main() {
         );
         sortOrder += 10;
       }
+
+      await client.query(
+        `insert into escalation_policies
+          (tenant_id, name, sla_kind, threshold_percent, target_type)
+         values ($1, 'Resolution breach to team lead', 'resolution', 100, 'team_lead')`,
+        [tenant.id],
+      );
     }
 
     for (const user of users) {
@@ -350,12 +375,29 @@ async function main() {
       "00000000-0000-4000-8000-000000003001",
     ]);
 
+    const adminAcme = "00000000-0000-4000-8000-000000001001";
     const agentAcme = "00000000-0000-4000-8000-000000001002";
     const employeeAcme = "00000000-0000-4000-8000-000000001003";
+    const adminGlobex = "00000000-0000-4000-8000-000000002001";
     const agentGlobex = "00000000-0000-4000-8000-000000002002";
     const employeeGlobex = "00000000-0000-4000-8000-000000002003";
     const acme = tenantIdBySlug.get("acme")!;
     const globex = tenantIdBySlug.get("globex")!;
+
+    await client.query(
+      "update memberships set manager_user_id = $3 where tenant_id = $1 and user_id = $2",
+      [acme, agentAcme, adminAcme],
+    );
+    await client.query(
+      "update memberships set manager_user_id = $3 where tenant_id = $1 and user_id = $2",
+      [globex, agentAcme, adminAcme],
+    );
+    await client.query(
+      "update memberships set manager_user_id = $3 where tenant_id = $1 and user_id = $2",
+      [globex, agentGlobex, adminGlobex],
+    );
+    await client.query("update teams set lead_user_id = $2 where tenant_id = $1", [acme, adminAcme]);
+    await client.query("update teams set lead_user_id = $2 where tenant_id = $1", [globex, adminGlobex]);
 
     async function status(tenantId: string, key: string): Promise<string> {
       const row = first(
@@ -403,6 +445,35 @@ async function main() {
         ).rows,
       );
       return row.id;
+    }
+
+    const defaultCanned = [
+      {
+        title: "Investigating Incident",
+        shortcut: "investigating",
+        body: "Hello {{requesterName}},\n\nWe have received your report regarding \"{{subject}}\" and our engineering team has initiated diagnostics. We will provide an update within 30 minutes.",
+      },
+      {
+        title: "Requesting Telemetry",
+        shortcut: "telemetry",
+        body: "Hello {{requesterName}},\n\nCould you please capture and attach the syslog output or interface diagnostic telemetry from the affected device so we can isolate the fault?",
+      },
+      {
+        title: "Resolution Confirmation",
+        shortcut: "resolved",
+        body: "Hello {{requesterName}},\n\nAll corrective actions for ticket #{{number}} are complete and verified. Please let us know if you observe any further anomalies.",
+      },
+    ];
+
+    for (const tenantId of [acme, globex]) {
+      for (const c of defaultCanned) {
+        await client.query(
+          `insert into canned_responses (tenant_id, title, shortcut, body, created_by)
+           values ($1, $2, $3, $4, $5)
+           on conflict (tenant_id, shortcut) do update set title = excluded.title, body = excluded.body`,
+          [tenantId, c.title, c.shortcut, c.body, tenantId === acme ? adminAcme : adminGlobex],
+        );
+      }
     }
 
     async function insertTicket(params: {
@@ -460,9 +531,132 @@ async function main() {
     // THAILAND TICKETS (acme)
     // ==========================================
 
+    const seedRichTicket = async (def: {
+      tenantId: string;
+      id: string;
+      number: number;
+      subject: string;
+      description: string;
+      requesterId: string;
+      assigneeId?: string | undefined;
+      teamId?: string | undefined;
+      categoryId: string;
+      priorityId: string;
+      statusId: string;
+      customFields: Record<string, unknown>;
+      pendingReason?: string | undefined;
+      resolutionSummary?: string | undefined;
+      firstRespondedAt?: string | undefined;
+      resolvedAt?: string | undefined;
+      closedAt?: string | undefined;
+      createdAt: string;
+      updatedAt: string;
+      history: Array<{
+        fromStatusId: string | null;
+        toStatusId: string;
+        actorId?: string;
+        actorRole: "employee" | "agent" | "tenant_admin";
+        reason?: string;
+        createdAt: string;
+      }>;
+      assignments?: Array<{
+        fromTeamId?: string | null;
+        toTeamId?: string | null;
+        fromAssigneeId?: string | null;
+        toAssigneeId?: string | null;
+        actorId?: string;
+        actorRole: "employee" | "agent" | "tenant_admin";
+        source?: "manual" | "automation";
+        createdAt: string;
+      }>;
+      comments?: Array<{
+        authorId: string;
+        body: string;
+        visibility: "public" | "internal";
+        createdAt: string;
+      }>;
+    }) => {
+      await insertTicket({
+        tenantId: def.tenantId,
+        id: def.id,
+        number: def.number,
+        subject: def.subject,
+        description: def.description,
+        requesterId: def.requesterId,
+        assigneeId: def.assigneeId,
+        teamId: def.teamId,
+        categoryId: def.categoryId,
+        priorityId: def.priorityId,
+        statusId: def.statusId,
+        customFields: def.customFields,
+        pendingReason: def.pendingReason,
+        resolutionSummary: def.resolutionSummary,
+        firstRespondedAt: def.firstRespondedAt,
+        resolvedAt: def.resolvedAt,
+        closedAt: def.closedAt,
+        createdAt: def.createdAt,
+        updatedAt: def.updatedAt,
+      });
+
+      for (const h of def.history) {
+        await client.query(
+          `insert into ticket_status_history
+            (tenant_id, ticket_id, from_status_id, to_status_id, actor_id, actor_role, reason, created_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            def.tenantId,
+            def.id,
+            h.fromStatusId,
+            h.toStatusId,
+            h.actorId ?? null,
+            h.actorRole,
+            h.reason ?? null,
+            h.createdAt,
+          ],
+        );
+      }
+
+      if (def.assignments) {
+        for (const a of def.assignments) {
+          await client.query(
+            `insert into ticket_assignment_history
+              (tenant_id, ticket_id, from_team_id, to_team_id, from_assignee_id, to_assignee_id, actor_id, actor_role, source, created_at)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [
+              def.tenantId,
+              def.id,
+              a.fromTeamId ?? null,
+              a.toTeamId ?? null,
+              a.fromAssigneeId ?? null,
+              a.toAssigneeId ?? null,
+              a.actorId ?? null,
+              a.actorRole,
+              a.source ?? "manual",
+              a.createdAt,
+            ],
+          );
+        }
+      }
+
+      if (def.comments) {
+        for (const c of def.comments) {
+          await client.query(
+            `insert into ticket_comments
+              (tenant_id, ticket_id, author_id, body, visibility, created_at)
+             values ($1,$2,$3,$4,$5,$6)`,
+            [def.tenantId, def.id, c.authorId, c.body, c.visibility, c.createdAt],
+          );
+        }
+      }
+    };
+
+    // ==========================================
+    // THAILAND TICKETS (acme)
+    // ==========================================
+
     // Ticket ACM-1: High priority DWDM link flap (In Progress)
     const acmeTicket1 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket1,
       number: 1,
@@ -478,45 +672,78 @@ async function main() {
       customFields: { site: "HQ", asset_tag: "DWDM-BKK-01" },
       firstRespondedAt: "2026-10-28T09:15:00Z",
       createdAt: "2026-10-28T09:00:00Z",
-      updatedAt: "2026-10-28T09:30:00Z",
+      updatedAt: "2026-10-28T09:45:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-10-28T09:00:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "new"),
+          toStatusId: await status(acme, "in_progress"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Triage complete. Rerouting traffic and analyzing line telemetry.",
+          createdAt: "2026-10-28T09:15:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "network"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-28T09:00:00Z",
+        },
+        {
+          fromTeamId: await team(acme, "network"),
+          toTeamId: await team(acme, "network"),
+          toAssigneeId: agentAcme,
+          actorId: agentAcme,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-28T09:12:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "Customer NOC at Agoda Bangkok office reported latency spike reaching 52ms and intermittent packet drops.",
+          visibility: "public",
+          createdAt: "2026-10-28T09:05:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Acknowledged. Investigating telemetry metrics on the Sathorn-Nimman span. Initial tests confirm optical amplifier alarms.",
+          visibility: "public",
+          createdAt: "2026-10-28T09:15:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "OTDR scan from Bangna shows optical reflection anomaly at KM 142 near Nakhon Sawan joint enclosure. Dispatching AIS field crew.",
+          visibility: "internal",
+          createdAt: "2026-10-28T09:20:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Traffic rerouted via secondary Eastern ring. Latency stabilized to 22ms while optical fiber inspection is ongoing.",
+          visibility: "public",
+          createdAt: "2026-10-28T09:30:00Z",
+        },
+        {
+          authorId: employeeAcme,
+          body: "Confirmed, latency has returned to normal across our Chiang Mai services. Awaiting field repair sign-off.",
+          visibility: "public",
+          createdAt: "2026-10-28T09:45:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-28T09:15:00Z')",
-      [acme, acmeTicket1, await status(acme, "in_progress"), agentAcme],
-    );
-    await client.query(
-      `insert into ticket_assignment_history
-        (tenant_id, ticket_id, to_assignee_id, to_team_id, actor_id, actor_role, source, created_at)
-       values ($1,$2,$3,$4,$5,'agent','manual','2026-10-28T09:10:00Z')`,
-      [acme, acmeTicket1, agentAcme, await team(acme, "network"), agentAcme],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-28T09:05:00Z')",
-      [acme, acmeTicket1, employeeAcme, "Customer NOC at Agoda Bangkok office reported latency spike reaching 52ms."],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'internal','2026-10-28T09:20:00Z')",
-      [
-        acme,
-        acmeTicket1,
-        agentAcme,
-        "OTDR scan from Bangna shows optical reflection anomaly at KM 142 near Nakhon Sawan joint enclosure. Dispatching AIS field crew.",
-      ],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-28T09:30:00Z')",
-      [
-        acme,
-        acmeTicket1,
-        agentAcme,
-        "Traffic rerouted via secondary Eastern ring. Latency stabilized to 22ms while optical fiber inspection is ongoing.",
-      ],
-    );
 
     // Ticket ACM-2: 5G Private SIM cards provisioning (New)
     const acmeTicket2 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket2,
       number: 2,
@@ -530,16 +757,36 @@ async function main() {
       customFields: { site: "HQ" },
       createdAt: "2026-10-29T10:00:00Z",
       updatedAt: "2026-10-29T10:00:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-10-29T10:00:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "service-desk"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-29T10:00:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "Project budget approved under PO-2026-TH-882. We require SIM delivery to the Rayong Industrial Gateway site before Friday.",
+          visibility: "public",
+          createdAt: "2026-10-29T10:00:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-10-29T10:00:00Z')",
-      [acme, acmeTicket2, await status(acme, "new")],
-    );
 
     // Ticket ACM-3: Bangna DC Precision AC Unit compressor alert (Pending)
     const acmeTicket3 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket3,
       number: 3,
@@ -556,21 +803,80 @@ async function main() {
       pendingReason: "Awaiting Daikin/Stulz HVAC technician arrival with replacement R410A expansion valve.",
       firstRespondedAt: "2026-10-30T04:45:00Z",
       createdAt: "2026-10-30T04:30:00Z",
-      updatedAt: "2026-10-30T05:15:00Z",
+      updatedAt: "2026-10-30T05:20:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-10-30T04:30:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "new"),
+          toStatusId: await status(acme, "in_progress"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Facilities emergency checklist initiated. Contacting HVAC vendor.",
+          createdAt: "2026-10-30T04:45:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "in_progress"),
+          toStatusId: await status(acme, "pending"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Awaiting Daikin/Stulz HVAC technician arrival with replacement R410A expansion valve.",
+          createdAt: "2026-10-30T05:15:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "service-desk"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-30T04:30:00Z",
+        },
+        {
+          fromTeamId: await team(acme, "service-desk"),
+          toTeamId: await team(acme, "service-desk"),
+          toAssigneeId: agentAcme,
+          actorId: agentAcme,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-30T04:40:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "BMS alert shows PAC Unit 2 compressor #1 tripping on high head pressure. Temperature in Suite 4B currently 21.4°C.",
+          visibility: "public",
+          createdAt: "2026-10-30T04:30:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Confirmed PAC Unit 3 has taken over the thermal load. Cold aisle airflow remains within SLA specification.",
+          visibility: "internal",
+          createdAt: "2026-10-30T04:50:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Stulz authorized maintenance contractor dispatched; ETA 11:30 ICT with replacement expansion valve.",
+          visibility: "internal",
+          createdAt: "2026-10-30T05:10:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Redundant cooling is operating normally. Ticket set to pending awaiting contractor on-site arrival at 11:30 ICT.",
+          visibility: "public",
+          createdAt: "2026-10-30T05:20:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-30T05:15:00Z')",
-      [acme, acmeTicket3, await status(acme, "pending"), agentAcme],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'internal','2026-10-30T05:10:00Z')",
-      [acme, acmeTicket3, agentAcme, "Stulz authorized maintenance contractor dispatched; ETA 11:30 ICT."],
-    );
 
     // Ticket ACM-4: Metro Dark Fiber Cut (Resolved)
     const acmeTicket4 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket4,
       number: 4,
@@ -589,21 +895,108 @@ async function main() {
       resolutionSummary:
         "Emergency splicing team reached subterranean duct near Khlong Toei junction. Fusion spliced all 48 single-mode optical cores. OTDR test confirmed loss under 0.2 dB/km.",
       createdAt: "2026-10-27T02:00:00Z",
-      updatedAt: "2026-10-27T06:45:00Z",
+      updatedAt: "2026-10-27T07:00:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-10-27T02:00:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "new"),
+          toStatusId: await status(acme, "in_progress"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "P1 Major incident declared. Fiber emergency response team mobilized.",
+          createdAt: "2026-10-27T02:15:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "in_progress"),
+          toStatusId: await status(acme, "pending"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Awaiting Bangkok Metropolitan Authority (BMA) emergency underground trench excavation permit.",
+          createdAt: "2026-10-27T03:00:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "pending"),
+          toStatusId: await status(acme, "in_progress"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "BMA permit approved, safety perimeter secured, excavation commenced.",
+          createdAt: "2026-10-27T04:15:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "in_progress"),
+          toStatusId: await status(acme, "resolved"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Emergency splicing team reached subterranean duct near Khlong Toei junction. Fusion spliced all 48 single-mode optical cores. OTDR test confirmed loss under 0.2 dB/km.",
+          createdAt: "2026-10-27T06:45:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "network"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-27T02:00:00Z",
+        },
+        {
+          fromTeamId: await team(acme, "network"),
+          toTeamId: await team(acme, "network"),
+          toAssigneeId: agentAcme,
+          actorId: agentAcme,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-27T02:12:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "Critical LOS alarm on dark fiber ring 2 between Sathorn HQ and Bangna DC. Rama IV road construction work appears to have breached our conduit.",
+          visibility: "public",
+          createdAt: "2026-10-27T02:00:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Emergency acknowledged. Network Operations Center has confirmed fiber cut near MRT Khlong Toei. Mobile splicing crew BKK-9102 dispatched.",
+          visibility: "public",
+          createdAt: "2026-10-27T02:12:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "OTDR scan confirms total fiber break at 1.42km from Sathorn ODF. Splicing team on site waiting for trench access clearance.",
+          visibility: "internal",
+          createdAt: "2026-10-27T02:30:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "BMA permit cleared. Trench opened. 48 optical ribbons aligned and fusion splicing underway.",
+          visibility: "internal",
+          createdAt: "2026-10-27T04:15:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Fiber splicing complete and verified. Optical power levels restored to nominal -14.2 dBm.",
+          visibility: "public",
+          createdAt: "2026-10-27T06:40:00Z",
+        },
+        {
+          authorId: employeeAcme,
+          body: "Verified all DWDM circuits and transit links on Ring 2 are back online with zero errors. Thank you for the rapid turnaround!",
+          visibility: "public",
+          createdAt: "2026-10-27T07:00:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-27T06:45:00Z')",
-      [acme, acmeTicket4, await status(acme, "resolved"), agentAcme],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-27T06:45:00Z')",
-      [acme, acmeTicket4, agentAcme, "Fiber splicing complete and verified. Optical power levels restored to nominal -14.2 dBm."],
-    );
 
     // Ticket ACM-5: Phuket POP BGP Peer Session (Closed)
     const acmeTicket5 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket5,
       number: 5,
@@ -624,16 +1017,87 @@ async function main() {
         "Adjusted BGP keepalive to 30s and hold timer to 90s to match upstream NT configuration. Session verified stable over 24-hour observation.",
       createdAt: "2026-10-25T14:00:00Z",
       updatedAt: "2026-10-26T15:10:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-10-25T14:00:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "new"),
+          toStatusId: await status(acme, "in_progress"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Investigating BGP session flap events with National Telecom.",
+          createdAt: "2026-10-25T14:20:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "in_progress"),
+          toStatusId: await status(acme, "resolved"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Adjusted BGP keepalive to 30s and hold timer to 90s to match upstream NT configuration. Session verified stable.",
+          createdAt: "2026-10-25T15:10:00Z",
+        },
+        {
+          fromStatusId: await status(acme, "resolved"),
+          toStatusId: await status(acme, "closed"),
+          actorId: agentAcme,
+          actorRole: "agent",
+          reason: "Session remained stable throughout 24-hour observation period. Ticket closed.",
+          createdAt: "2026-10-26T15:10:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "network"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-25T14:00:00Z",
+        },
+        {
+          fromTeamId: await team(acme, "network"),
+          toTeamId: await team(acme, "network"),
+          toAssigneeId: agentAcme,
+          actorId: agentAcme,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-25T14:15:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "Upstream BGP peering session with National Telecom (NT) at Phuket Town internet exchange experienced 3 flaps due to hold timer mismatch during router maintenance window.",
+          visibility: "public",
+          createdAt: "2026-10-25T14:00:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "NT router peer configured with holdtime 90s. Our MX204 interface was set to aggressive 30s holdtime. Aligning timer values.",
+          visibility: "internal",
+          createdAt: "2026-10-25T14:35:00Z",
+        },
+        {
+          authorId: agentAcme,
+          body: "Timer values updated. BGP session re-established with 84,200 routes received.",
+          visibility: "public",
+          createdAt: "2026-10-25T15:10:00Z",
+        },
+        {
+          authorId: employeeAcme,
+          body: "BGP session has remained uninterrupted with zero route withdrawals for 24 hours. Closing ticket.",
+          visibility: "public",
+          createdAt: "2026-10-26T15:00:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-26T15:10:00Z')",
-      [acme, acmeTicket5, await status(acme, "closed"), agentAcme],
-    );
 
     // Ticket ACM-6: Quarterly optical transceiver audit (New)
     const acmeTicket6 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: acme,
       id: acmeTicket6,
       number: 6,
@@ -647,12 +1111,32 @@ async function main() {
       customFields: { site: "Bangkok Sathorn HQ" },
       createdAt: "2026-11-01T08:00:00Z",
       updatedAt: "2026-11-01T08:00:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(acme, "new"),
+          actorId: employeeAcme,
+          actorRole: "employee",
+          createdAt: "2026-11-01T08:00:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(acme, "service-desk"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-11-01T08:00:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeAcme,
+          body: "Audit sheet uploaded to shared drive. Please verify physical serials against ERP ledger before end of month.",
+          visibility: "public",
+          createdAt: "2026-11-01T08:00:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-11-01T08:00:00Z')",
-      [acme, acmeTicket6, await status(acme, "new")],
-    );
 
     // ==========================================
     // MYANMAR TICKETS (globex)
@@ -660,7 +1144,7 @@ async function main() {
 
     // Ticket GLX-1: Mandalay Hub Generator Switchover (New)
     const globexTicket1 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket1,
       number: 1,
@@ -674,21 +1158,37 @@ async function main() {
       statusId: await status(globex, "new"),
       customFields: { department: "Power & Infrastructure", site: "Mandalay 78th Hub" },
       createdAt: "2026-10-31T06:30:00Z",
-      updatedAt: "2026-10-31T06:30:00Z",
+      updatedAt: "2026-10-31T06:35:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-10-31T06:30:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-31T06:30:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Municipal power offline. Requesting emergency fuel tanker dispatch from Denko Petroleum to avoid generator fuel starvation.",
+          visibility: "public",
+          createdAt: "2026-10-31T06:35:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-10-31T06:30:00Z')",
-      [globex, globexTicket1, await status(globex, "new")],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-31T06:35:00Z')",
-      [globex, globexTicket1, employeeGlobex, "Municipal power offline. Requesting emergency fuel tanker dispatch from Denko Petroleum."],
-    );
 
     // Ticket GLX-2: Pyay Road MPT Fiber Circuit Resplicing (Resolved)
     const globexTicket2 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket2,
       number: 2,
@@ -707,21 +1207,96 @@ async function main() {
       resolutionSummary:
         "MPT joint splicing crew repaired underground conduit. Traffic transitioned from Starlink backup back to low-latency terrestrial fiber. Ping to Singapore cloud gateway: 24ms.",
       createdAt: "2026-10-26T08:00:00Z",
-      updatedAt: "2026-10-26T14:30:00Z",
+      updatedAt: "2026-10-26T14:45:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-10-26T08:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "new"),
+          toStatusId: await status(globex, "in_progress"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Starlink failover active, monitoring MPT repair crew at Hledan.",
+          createdAt: "2026-10-26T08:20:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "in_progress"),
+          toStatusId: await status(globex, "pending"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Awaiting MPT joint engineering crew to complete underground conduit re-splicing.",
+          createdAt: "2026-10-26T11:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "pending"),
+          toStatusId: await status(globex, "in_progress"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "MPT splicing complete. Initiating OTDR link verification and failback.",
+          createdAt: "2026-10-26T13:45:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "in_progress"),
+          toStatusId: await status(globex, "resolved"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "MPT joint splicing crew repaired underground conduit. Traffic transitioned from Starlink backup back to low-latency terrestrial fiber. Ping to Singapore cloud gateway: 24ms.",
+          createdAt: "2026-10-26T14:30:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-26T08:00:00Z",
+        },
+        {
+          fromTeamId: await team(globex, "it-ops"),
+          toTeamId: await team(globex, "it-ops"),
+          toAssigneeId: agentGlobex,
+          actorId: agentGlobex,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-26T08:15:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Primary 10Gbps terrestrial backhaul cut during drainage trenching near Hledan Centre. Automated failover shifted traffic to Starlink backup.",
+          visibility: "public",
+          createdAt: "2026-10-26T08:00:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "MPT engineering team reports severed 24-core cable during road widening. Joint box being installed.",
+          visibility: "internal",
+          createdAt: "2026-10-26T09:30:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "MPT optical splice complete. Signal levels tested at -16.8 dBm. Primary circuit restored.",
+          visibility: "public",
+          createdAt: "2026-10-26T14:30:00Z",
+        },
+        {
+          authorId: employeeGlobex,
+          body: "Confirmed low latency restored. Excellent failover performance throughout the incident.",
+          visibility: "public",
+          createdAt: "2026-10-26T14:45:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-26T14:30:00Z')",
-      [globex, globexTicket2, await status(globex, "resolved"), agentGlobex],
-    );
-    await client.query(
-      "insert into ticket_comments (tenant_id, ticket_id, author_id, body, visibility, created_at) values ($1,$2,$3,$4,'public','2026-10-26T14:30:00Z')",
-      [globex, globexTicket2, agentGlobex, "MPT optical splice complete. Signal levels tested at -16.8 dBm. Primary circuit restored."],
-    );
 
     // Ticket GLX-3: Yankin NOC Satellite Uplink Rain Fade (In Progress)
     const globexTicket3 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket3,
       number: 3,
@@ -737,17 +1312,66 @@ async function main() {
       customFields: { department: "NOC Satellite", site: "Yangon Yankin NOC" },
       firstRespondedAt: "2026-10-30T11:15:00Z",
       createdAt: "2026-10-30T11:00:00Z",
-      updatedAt: "2026-10-30T11:30:00Z",
+      updatedAt: "2026-10-30T11:35:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-10-30T11:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "new"),
+          toStatusId: await status(globex, "in_progress"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Adjusting uplink power control (AUPC) and adaptive modulation.",
+          createdAt: "2026-10-30T11:15:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-30T11:00:00Z",
+        },
+        {
+          fromTeamId: await team(globex, "it-ops"),
+          toTeamId: await team(globex, "it-ops"),
+          toAssigneeId: agentGlobex,
+          actorId: agentGlobex,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-30T11:12:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Monsoon squall over Yankin. Ku-band backup satellite packet loss reaching 12%. Carrier-to-noise ratio dropping.",
+          visibility: "public",
+          createdAt: "2026-10-30T11:00:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Enabled MODCOD QPSK 1/2 fallback to stabilize link until the squall line moves past Yankin ridge.",
+          visibility: "internal",
+          createdAt: "2026-10-30T11:25:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Rain attenuation mitigation active. Packet loss reduced to 1.5%. Monitoring weather radar.",
+          visibility: "public",
+          createdAt: "2026-10-30T11:30:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-30T11:15:00Z')",
-      [globex, globexTicket3, await status(globex, "in_progress"), agentGlobex],
-    );
 
     // Ticket GLX-4: KBZPay Payment Webhook Timeout (Pending)
     const globexTicket4 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket4,
       number: 4,
@@ -764,17 +1388,74 @@ async function main() {
       pendingReason: "Awaiting KBZ Bank API integration team verification of upstream rate limits.",
       firstRespondedAt: "2026-10-29T16:30:00Z",
       createdAt: "2026-10-29T16:00:00Z",
-      updatedAt: "2026-10-29T17:00:00Z",
+      updatedAt: "2026-10-29T17:10:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-10-29T16:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "new"),
+          toStatusId: await status(globex, "in_progress"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Tracing Nginx gateway logs and inspecting SSL handshake latencies.",
+          createdAt: "2026-10-29T16:20:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "in_progress"),
+          toStatusId: await status(globex, "pending"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Awaiting KBZ Bank API integration team verification of upstream rate limits.",
+          createdAt: "2026-10-29T17:00:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-29T16:00:00Z",
+        },
+        {
+          fromTeamId: await team(globex, "it-ops"),
+          toTeamId: await team(globex, "it-ops"),
+          toAssigneeId: agentGlobex,
+          actorId: agentGlobex,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-29T16:15:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Subscribers reporting top-ups taking up to 10 minutes to reflect. Error logs indicate HTTP 504 gateway timeout from KBZPay webhook.",
+          visibility: "public",
+          createdAt: "2026-10-29T16:00:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Our ingress webhook listener is healthy with zero queue backlog. Upstream KBZPay staging endpoint api.kbzpay.com/notify is dropping 15% of packets.",
+          visibility: "internal",
+          createdAt: "2026-10-29T16:45:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Opened escalation ticket KBZ-89104 with KBZ Bank partner support. Placed ticket in pending status awaiting bank engineering response.",
+          visibility: "public",
+          createdAt: "2026-10-29T17:05:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-29T17:00:00Z')",
-      [globex, globexTicket4, await status(globex, "pending"), agentGlobex],
-    );
 
     // Ticket GLX-5: Naypyidaw Router Flash Replacement (Closed)
     const globexTicket5 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket5,
       number: 5,
@@ -795,16 +1476,87 @@ async function main() {
         "Field engineer swapped flash module, flashed IOS-XE 17.6.4 image, and synced startup configuration from central Git repository.",
       createdAt: "2026-10-24T05:00:00Z",
       updatedAt: "2026-10-25T10:00:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-10-24T05:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "new"),
+          toStatusId: await status(globex, "in_progress"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Connecting via out-of-band console to diagnose bootflash integrity.",
+          createdAt: "2026-10-24T05:30:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "in_progress"),
+          toStatusId: await status(globex, "resolved"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Field engineer swapped flash module, flashed IOS-XE 17.6.4 image, and synced startup configuration from central Git repository.",
+          createdAt: "2026-10-24T10:00:00Z",
+        },
+        {
+          fromStatusId: await status(globex, "resolved"),
+          toStatusId: await status(globex, "closed"),
+          actorId: agentGlobex,
+          actorRole: "agent",
+          reason: "Branch verified uninterrupted operations over 24 hours. Closing ticket.",
+          createdAt: "2026-10-25T10:00:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-10-24T05:00:00Z",
+        },
+        {
+          fromTeamId: await team(globex, "it-ops"),
+          toTeamId: await team(globex, "it-ops"),
+          toAssigneeId: agentGlobex,
+          actorId: agentGlobex,
+          actorRole: "agent",
+          source: "manual",
+          createdAt: "2026-10-24T05:25:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Router bootflash partition reported multiple bad block sectors during weekly cron backup.",
+          visibility: "public",
+          createdAt: "2026-10-24T05:00:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Ran fsck bootflash:. Found corrupt sector in IOS-XE image file. Formatting bootflash and staging clean image from TFTP.",
+          visibility: "internal",
+          createdAt: "2026-10-24T06:15:00Z",
+        },
+        {
+          authorId: agentGlobex,
+          body: "Flash module replaced. Router rebooted and running verified IOS-XE 17.6.4 release. All branch routing tables nominal.",
+          visibility: "public",
+          createdAt: "2026-10-24T10:00:00Z",
+        },
+        {
+          authorId: employeeGlobex,
+          body: "Branch internet and VoIP traffic stable with zero packet drop over 24 hours. Thank you!",
+          visibility: "public",
+          createdAt: "2026-10-25T09:45:00Z",
+        },
+      ],
     });
-
-    await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_id, actor_role, created_at) values ($1,$2,$3,$4,'agent','2026-10-25T10:00:00Z')",
-      [globex, globexTicket5, await status(globex, "closed"), agentGlobex],
-    );
 
     // Ticket GLX-6: Taunggyi Tower Solar Battery (New)
     const globexTicket6 = randomUUID();
-    await insertTicket({
+    await seedRichTicket({
       tenantId: globex,
       id: globexTicket6,
       number: 6,
@@ -818,11 +1570,45 @@ async function main() {
       customFields: { department: "Remote Towers" },
       createdAt: "2026-11-01T09:00:00Z",
       updatedAt: "2026-11-01T09:00:00Z",
+      history: [
+        {
+          fromStatusId: null,
+          toStatusId: await status(globex, "new"),
+          actorId: employeeGlobex,
+          actorRole: "employee",
+          createdAt: "2026-11-01T09:00:00Z",
+        },
+      ],
+      assignments: [
+        {
+          toTeamId: await team(globex, "it-ops"),
+          actorRole: "employee",
+          source: "automation",
+          createdAt: "2026-11-01T09:00:00Z",
+        },
+      ],
+      comments: [
+        {
+          authorId: employeeGlobex,
+          body: "Solar BMS telemetry indicates string #3 battery float voltage is 48.2V vs nominal 53.5V. Technician inspection requested.",
+          visibility: "public",
+          createdAt: "2026-11-01T09:00:00Z",
+        },
+      ],
     });
 
+    // Ticket Links (Cross-references)
     await client.query(
-      "insert into ticket_status_history (tenant_id, ticket_id, to_status_id, actor_role, created_at) values ($1,$2,$3,'employee','2026-11-01T09:00:00Z')",
-      [globex, globexTicket6, await status(globex, "new")],
+      `insert into ticket_links (tenant_id, source_ticket_id, target_ticket_id, link_type, created_by, created_at)
+       values ($1,$2,$3,'causes',$4,'2026-10-27T02:30:00Z')
+       on conflict do nothing`,
+      [acme, acmeTicket4, acmeTicket1, agentAcme],
+    );
+    await client.query(
+      `insert into ticket_links (tenant_id, source_ticket_id, target_ticket_id, link_type, created_by, created_at)
+       values ($1,$2,$3,'causes',$4,'2026-10-26T08:30:00Z')
+       on conflict do nothing`,
+      [globex, globexTicket2, globexTicket3, agentGlobex],
     );
 
     // ==========================================
