@@ -419,7 +419,7 @@ svg {
 .ws-switch .menu {
   left: 0;
   right: auto;
-  width: 100%;
+  width: min(320px, calc(100vw - 24px));
   min-width: 230px;
 }
 
@@ -482,6 +482,7 @@ svg {
   font-size: 12.5px;
   font-weight: 500;
   line-height: 1.3;
+  overflow-wrap: break-word;
 }
 
 .menu-item-label small {
@@ -1348,8 +1349,9 @@ input[type="checkbox"]:disabled {
   align-items: center;
   gap: 9px;
   width: 100%;
-  height: 34px;
-  padding: 0 9px;
+  height: auto;
+  min-height: 34px;
+  padding: 6px 9px;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
