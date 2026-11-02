@@ -1562,6 +1562,11 @@ input[type="checkbox"]:disabled {
   line-height: 1.5;
 }
 
+.callout:not(:first-child),
+.card > .callout {
+  margin-top: 16px;
+}
+
 .alert.error {
   background: var(--danger-soft);
   border-color: color-mix(in srgb, var(--danger) 26%, transparent);
