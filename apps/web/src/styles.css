@@ -1486,6 +1486,11 @@ input[type="checkbox"]:disabled {
   color: var(--success);
 }
 
+.status-urgent {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .status-closed {
   background: var(--neutral-soft);
   color: var(--muted);

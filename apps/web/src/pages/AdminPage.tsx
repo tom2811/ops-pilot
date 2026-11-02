@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, del, errorMessage, formatDate, humanize, patch, post, put } from "../api.js";
+import { api, del, errorMessage, humanize, patch, post, put } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, PageSkeleton } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";

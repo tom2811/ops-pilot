@@ -183,6 +183,16 @@ export function requirePermission(...permissions: Permission[]) {
   };
 }
 
+export function requireAnyPermission(...permissions: Permission[]) {
+  return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
+    const tenant = req.tenant;
+    if (!tenant) throw new AppError(401, "Unauthorized");
+    if (!permissions.some((permission) => tenant.permissions.includes(permission))) {
+      throw new AppError(403, "Forbidden");
+    }
+  };
+}
+
 export function requireRole(...roles: Role[]) {
   return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     const tenant = req.tenant;

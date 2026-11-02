@@ -194,6 +194,7 @@ async function hasReadAccess(
     return (mergedParticipant.rowCount ?? 0) > 0;
   }
   if (ticket.assignee_id === userId) return true;
+  if (ticket.assignee_id === null && ticket.team_id === null) return true;
   return isTeamMember(client, ticket.tenant_id, userId, ticket.team_id);
 }
 
@@ -239,10 +240,12 @@ export async function listTickets(
     index += 1;
   } else if (role === "agent") {
     conditions.push(
-      `(t.assignee_id = $${index} or exists (
-        select 1 from team_members tm
-        where tm.tenant_id = t.tenant_id and tm.user_id = $${index} and tm.team_id = t.team_id
-      ))`,
+      `(t.assignee_id = $${index}
+        or (t.assignee_id is null and t.team_id is null)
+        or exists (
+          select 1 from team_members tm
+          where tm.tenant_id = t.tenant_id and tm.user_id = $${index} and tm.team_id = t.team_id
+        ))`,
     );
     params.push(userId);
     index += 1;

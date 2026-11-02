@@ -32,6 +32,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
             or ($2 = 'employee' and t.requester_id = $3)
             or ($2 = 'agent' and (
               t.assignee_id = $3
+              or (t.assignee_id is null and t.team_id is null)
               or exists (
                 select 1 from team_members tm
                 where tm.tenant_id = t.tenant_id and tm.user_id = $3 and tm.team_id = t.team_id

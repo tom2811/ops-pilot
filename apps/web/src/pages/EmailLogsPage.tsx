@@ -74,58 +74,8 @@ export function EmailLogsPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setData({
-            outbound: [
-              {
-                id: "notif-1",
-                channel: "email",
-                subject: "Ticket #10 Created: Transit BGP flap on upstream interface - Reported via Email",
-                delivery_status: "sent",
-                attempts: 1,
-                provider_message_id: "resend_mvz3k83x_live",
-                sent_at: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
-                created_at: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
-                last_error: null,
-                recipient_email: "agent@acme.test",
-              },
-              {
-                id: "notif-2",
-                channel: "email",
-                subject: "Ticket #4 resolved: Metro dark fiber ring 2 severed (CSAT Survey Link)",
-                delivery_status: "sent",
-                attempts: 1,
-                provider_message_id: "resend_mvz289aa_live",
-                sent_at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-                created_at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-                last_error: null,
-                recipient_email: "kanya.wongsuwan@acme.test",
-              },
-            ],
-            inbound: [
-              {
-                id: "inbound-1",
-                message_id: "<inbound-1730542161@bangkok-telecom.com>",
-                from_address: "oaksoe.thein01@gmail.com",
-                to_address: `support@${tenantSlug}.opspilot.dev`,
-                subject: "Transit BGP flap on upstream interface - Reported via Email",
-                action: "ticket_created",
-                ticket_id: "t-10",
-                ticket_number: 10,
-                created_at: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
-              },
-              {
-                id: "inbound-2",
-                message_id: "<reply-1730538900@acme.test>",
-                from_address: "kanya.wongsuwan@acme.test",
-                to_address: `support@${tenantSlug}.opspilot.dev`,
-                subject: "Re: [ACM-000004] Splicing verified, power levels nominal",
-                action: "comment_added",
-                ticket_id: "t-4",
-                ticket_number: 4,
-                created_at: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
-              },
-            ],
-          });
+          setData(null);
+          setError(errorMessage(err));
         }
       })
       .finally(() => {
