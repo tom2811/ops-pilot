@@ -75,10 +75,10 @@ describe("stagePausesResolution", () => {
 });
 
 describe("password hashing", () => {
-  it("verifies the right password and rejects the wrong one", () => {
-    const stored = hashPassword("Passw0rd!");
-    expect(verifyPassword("Passw0rd!", stored)).toBe(true);
-    expect(verifyPassword("wrong-password", stored)).toBe(false);
+  it("verifies the right password and rejects the wrong one", async () => {
+    const stored = await hashPassword("Passw0rd!");
+    expect(await verifyPassword("Passw0rd!", stored)).toBe(true);
+    expect(await verifyPassword("wrong-password", stored)).toBe(false);
   });
 });
 

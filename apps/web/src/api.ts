@@ -9,17 +9,30 @@ export class ApiError extends Error {
 
 const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
+let csrfToken: string | null = null;
+const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
+
+export function csrfHeaders(): Record<string, string> {
+  return csrfToken ? { "x-csrf-token": csrfToken } : {};
+}
+
 export function apiUrl(path: string): string {
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   return `${apiBase}/api${cleanPath}`;
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
   const response = await fetch(apiUrl(path), {
     credentials: "include",
     ...init,
     headers: {
       ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(mutatingMethods.has(method) ? csrfHeaders() : {}),
       ...init.headers,
     },
   });

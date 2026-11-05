@@ -38,8 +38,14 @@ export async function withTenant<T>(
   const client = await pool.connect();
   try {
     await client.query("begin");
-    if (userId) await client.query("select set_config('app.user_id', $1, true)", [userId]);
-    await client.query("select set_config('app.tenant_id', $1, true)", [tenantId]);
+    if (userId) {
+      await client.query(
+        "select set_config('app.user_id', $1, true), set_config('app.tenant_id', $2, true)",
+        [userId, tenantId],
+      );
+    } else {
+      await client.query("select set_config('app.tenant_id', $1, true)", [tenantId]);
+    }
     const result = await fn(client);
     await client.query("commit");
     return result;

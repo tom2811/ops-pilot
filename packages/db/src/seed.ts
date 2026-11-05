@@ -349,7 +349,7 @@ async function main() {
     for (const user of users) {
       await client.query(
         "insert into users (id, email, password_hash, display_name) values ($1, $2, $3, $4)",
-        [user.id, user.email, hashPassword(PASSWORD), user.name],
+        [user.id, user.email, await hashPassword(PASSWORD), user.name],
       );
       for (const membership of user.memberships) {
         const tenantId = tenantIdBySlug.get(membership.tenantSlug);

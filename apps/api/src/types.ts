@@ -28,5 +28,6 @@ declare module "fastify" {
     tenant?: TenantContext;
     automation?: AutomationContext;
     correlationId: string;
+    rawBody?: string;
   }
 }

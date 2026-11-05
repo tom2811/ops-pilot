@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, post } from "./api.js";
+import { api, post, setCsrfToken } from "./api.js";
 import type { Membership, User } from "./types.js";
 
-type MeResponse = { user: User; memberships: Membership[] };
+type MeResponse = { user: User; memberships: Membership[]; csrfToken: string | null };
 
 type AuthState = {
   user: User | null;
@@ -24,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api<MeResponse>("/auth/me")
       .then((me) => {
         if (cancelled) return;
+        setCsrfToken(me.csrfToken);
         setUser(me.user);
         setMemberships(me.memberships);
       })
@@ -43,12 +44,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const me = await post<MeResponse>("/auth/login", { email, password });
+    setCsrfToken(me.csrfToken);
     setUser(me.user);
     setMemberships(me.memberships);
   }, []);
 
   const logout = useCallback(async () => {
     await post("/auth/logout", {});
+    setCsrfToken(null);
     setUser(null);
     setMemberships([]);
   }, []);

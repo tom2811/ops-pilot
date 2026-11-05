@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatTicketNumber, renderTemplate } from "@opspilot/core";
-import { ApiError, api, apiUrl, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
+import { ApiError, api, apiUrl, csrfHeaders, del, errorMessage, formatDate, humanize, patch, post } from "../api.js";
 import { useAuth } from "../auth.js";
 import { DetailSkeleton, EmptyState, ErrorAlert, PriorityBadge, SlaBadge, StatusBadge } from "../components.js";
 import { Select, useConfirm, useToast } from "../ui.js";
@@ -498,6 +498,7 @@ export function TicketDetailPage() {
         method: "POST",
         body,
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as { error?: string } | null;

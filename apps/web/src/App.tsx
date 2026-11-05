@@ -13,7 +13,7 @@ import {
 import { humanize } from "./api.js";
 import { useAuth } from "./auth.js";
 import type { User } from "./types.js";
-import { PageSkeleton } from "./components.js";
+import { ErrorBoundary, PageSkeleton } from "./components.js";
 import { Icon, BrandMark, Menu, ThemeToggle, useTheme, type IconName } from "./ui.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { AdminPage } from "./pages/AdminPage.js";
@@ -399,7 +399,7 @@ function TenantLayout() {
             <div key={group.label}>
               <p className="sb-label">{group.label}</p>
               {group.items.map((item) => (
-                <NavLink key={item.to} to={item.to} className="sb-item" title={item.label}>
+                <NavLink key={item.to} to={item.to} className="sb-item" title={collapsed ? item.label : undefined}>
                   <Icon name={item.icon} />
                   <span className="sb-item-label">{item.label}</span>
                 </NavLink>
@@ -492,7 +492,9 @@ function TenantLayout() {
           </div>
         </header>
         <main className="page">
-          <Outlet />
+          <ErrorBoundary fallbackTitle="Could not load view">
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
@@ -578,41 +580,43 @@ function NotFound() {
 
 export function App() {
   return (
-    <Routes>
-      <Route path="/" element={<HomeRedirect />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route path="/invite/:token" element={<InvitationPage />} />
-      <Route path="/feedback" element={<FeedbackPage />} />
-      <Route
-        path="/account"
-        element={
-          <StandaloneLayout>
-            <AccountPage />
-          </StandaloneLayout>
-        }
-      />
-      <Route
-        path="/platform"
-        element={
-          <StandaloneLayout>
-            <PlatformPage />
-          </StandaloneLayout>
-        }
-      />
-      <Route path="/t/:tenantSlug" element={<TenantLayout />}>
-        <Route index element={<Navigate to="overview" replace />} />
-        <Route path="overview" element={<OverviewPage />} />
-        <Route path="tickets" element={<TicketsPage />} />
-        <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
-        <Route path="admin" element={<AdminPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="audit" element={<AuditLogPage />} />
-        <Route path="email-logs" element={<EmailLogsPage />} />
-      </Route>
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+    <ErrorBoundary fallbackTitle="Application error">
+      <Routes>
+        <Route path="/" element={<HomeRedirect />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/invite/:token" element={<InvitationPage />} />
+        <Route path="/feedback" element={<FeedbackPage />} />
+        <Route
+          path="/account"
+          element={
+            <StandaloneLayout>
+              <AccountPage />
+            </StandaloneLayout>
+          }
+        />
+        <Route
+          path="/platform"
+          element={
+            <StandaloneLayout>
+              <PlatformPage />
+            </StandaloneLayout>
+          }
+        />
+        <Route path="/t/:tenantSlug" element={<TenantLayout />}>
+          <Route index element={<Navigate to="overview" replace />} />
+          <Route path="overview" element={<OverviewPage />} />
+          <Route path="tickets" element={<TicketsPage />} />
+          <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
+          <Route path="admin" element={<AdminPage />} />
+          <Route path="reports" element={<ReportsPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="audit" element={<AuditLogPage />} />
+          <Route path="email-logs" element={<EmailLogsPage />} />
+        </Route>
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </ErrorBoundary>
   );
 }

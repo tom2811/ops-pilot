@@ -180,7 +180,7 @@ export async function processInboundEmail(
       `insert into users (email, display_name, password_hash)
        values ($1, $2, $3)
        returning id`,
-      [fromParsed.address, fromParsed.name || fromParsed.address.split("@")[0], hashPassword(randomPass)],
+      [fromParsed.address, fromParsed.name || fromParsed.address.split("@")[0], await hashPassword(randomPass)],
     );
     userId = createdUser.rows[0]!.id;
   }

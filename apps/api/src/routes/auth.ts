@@ -10,13 +10,16 @@ import {
 } from "@opspilot/core";
 import { hashPassword, verifyPassword } from "@opspilot/core/password";
 import {
+  clearFailedLogins,
   clearSessionCookie,
   createSession,
+  currentCsrfToken,
   currentSessionHash,
   deleteSession,
   getLoginUser,
   getMemberships,
   hashToken,
+  recordFailedLogin,
   requireAuth,
   setSessionCookie,
 } from "../auth.js";
@@ -27,6 +30,10 @@ import { AppError } from "../errors.js";
 
 const inviteParams = z.object({ token: z.string().min(10).max(200) });
 
+// A syntactically valid hash used to keep failed logins for unknown accounts
+// roughly as expensive as real ones, so timing does not reveal which emails exist.
+const DUMMY_HASH = `scrypt$${"0".repeat(32)}$${"0".repeat(128)}`;
+
 function webUrl(path: string): string {
   return `${env.WEB_ORIGIN.replace(/\/$/, "")}${path}`;
 }
@@ -35,9 +42,18 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post("/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = loginSchema.parse(req.body);
     const user = await getLoginUser(input.email.toLowerCase());
-    if (!user || !verifyPassword(input.password, user.passwordHash)) {
+    if (!user) {
+      await verifyPassword(input.password, DUMMY_HASH);
       throw new AppError(401, "Invalid email or password");
     }
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      throw new AppError(429, "Too many failed attempts. Try again in a few minutes.");
+    }
+    if (!(await verifyPassword(input.password, user.passwordHash))) {
+      await recordFailedLogin(user.id);
+      throw new AppError(401, "Invalid email or password");
+    }
+    await clearFailedLogins(user.id);
 
     const session = await createSession(user.id, {
       userAgent: req.headers["user-agent"],
@@ -53,6 +69,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         isPlatformAdmin: user.isPlatformAdmin,
       },
       memberships,
+      csrfToken: session.csrfToken,
     };
   });
 
@@ -65,7 +82,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.get("/me", { preHandler: requireAuth }, async (req) => {
     const user = req.authUser;
     if (!user) throw new AppError(401, "Unauthorized");
-    return { user, memberships: await getMemberships(user.id) };
+    return {
+      user,
+      memberships: await getMemberships(user.id),
+      csrfToken: await currentCsrfToken(req),
+    };
   });
 
   app.get("/sessions", { preHandler: requireAuth }, async (req) => {
@@ -108,11 +129,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!req.authUser) throw new AppError(401, "Unauthorized");
     const input = passwordChangeSchema.parse(req.body);
     const user = await getLoginUser(req.authUser.email);
-    if (!user || !verifyPassword(input.currentPassword, user.passwordHash)) {
+    if (!user || !(await verifyPassword(input.currentPassword, user.passwordHash))) {
       throw new AppError(400, "Current password is incorrect");
     }
     await pool.query("update users set password_hash = $1 where id = $2", [
-      hashPassword(input.newPassword),
+      await hashPassword(input.newPassword),
       user.id,
     ]);
     const current = currentSessionHash(req);
@@ -168,7 +189,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const tokenRow = result.rows[0];
       if (!tokenRow) throw new AppError(400, "This reset link is invalid or expired");
       await client.query("update users set password_hash = $1 where id = $2", [
-        hashPassword(input.password),
+        await hashPassword(input.password),
         tokenRow.user_id,
       ]);
       await client.query("update password_reset_tokens set used_at = now() where id = $1", [
@@ -269,7 +290,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       if (existingUser) {
         if (!existingUser.is_active) throw new AppError(400, "That account is disabled");
-        if (!input.password || !verifyPassword(input.password, existingUser.password_hash)) {
+        if (!input.password || !(await verifyPassword(input.password, existingUser.password_hash))) {
           throw new AppError(401, "Enter the password for the invited account");
         }
         userId = existingUser.id;
@@ -283,7 +304,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           `insert into users (email, display_name, password_hash)
            values ($1, $2, $3)
            returning id, email, display_name`,
-          [invite.email, input.displayName, hashPassword(input.password)],
+          [invite.email, input.displayName, await hashPassword(input.password)],
         );
         const user = created.rows[0];
         if (!user) throw new Error("failed to create user");
@@ -330,6 +351,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return {
       user: { id: userId, email: userEmail, displayName, isPlatformAdmin: false },
       memberships: await getMemberships(userId),
+      csrfToken: session.csrfToken,
     };
   });
 }

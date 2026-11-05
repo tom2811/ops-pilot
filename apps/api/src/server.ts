@@ -1,13 +1,13 @@
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
-import { pool } from "./db.js";
+import { adminPool, pool } from "./db.js";
 
 const app = await buildApp();
 
 async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "shutting down");
   await app.close();
-  await pool.end();
+  await Promise.allSettled([pool.end(), adminPool.end()]);
   process.exit(0);
 }
 

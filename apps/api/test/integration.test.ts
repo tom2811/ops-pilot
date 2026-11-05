@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { resolve } from "node:path";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import type { FastifyInstance } from "fastify";
@@ -40,6 +41,8 @@ let fixtures: Fixtures;
 let slaDomain: typeof import("../src/domain/sla.js");
 
 const cookieCache = new Map<string, string>();
+const csrfCache = new Map<string, string>();
+const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function login(email: string): Promise<string> {
   const cached = cookieCache.get(email);
@@ -55,17 +58,23 @@ async function login(email: string): Promise<string> {
   const session = values.find((value) => value.startsWith("opspilot_session="));
   if (!session) throw new Error("login returned no session cookie");
   const cookie = session.split(";")[0] ?? "";
+  const csrfToken = response.json().csrfToken as string | undefined;
+  if (!csrfToken) throw new Error("login returned no CSRF token");
   cookieCache.set(email, cookie);
+  csrfCache.set(cookie, csrfToken);
   return cookie;
 }
 
 function inject(cookie: string | null, options: InjectOptions) {
+  const method = (options.method ?? "GET").toUpperCase();
+  const csrfToken = cookie ? csrfCache.get(cookie) : undefined;
   return app.inject({
     method: options.method ?? "GET",
     url: options.url,
     payload: options.payload,
     headers: {
       ...(cookie ? { cookie } : {}),
+      ...(csrfToken && mutatingMethods.has(method) ? { "x-csrf-token": csrfToken } : {}),
       ...(options.headers ?? {}),
     },
   } as never);
@@ -206,6 +215,78 @@ describe("authentication and tenant isolation", () => {
     expect(response.json().memberships).toEqual(
       expect.arrayContaining([expect.objectContaining({ slug: "acme", role: "tenant_admin" })]),
     );
+  });
+
+  it("rejects session-authenticated mutations without a CSRF token", async () => {
+    const adminCookie = await login("admin@acme.test");
+    const body = { currentPassword: "WrongPassw0rd!", newPassword: "AnotherPassw0rd!" };
+
+    const missing = await app.inject({
+      method: "POST",
+      url: "/api/auth/password/change",
+      headers: { cookie: adminCookie },
+      payload: body,
+    });
+    expect(missing.statusCode).toBe(403);
+
+    const wrong = await app.inject({
+      method: "POST",
+      url: "/api/auth/password/change",
+      headers: { cookie: adminCookie, "x-csrf-token": "not-the-right-token" },
+      payload: body,
+    });
+    expect(wrong.statusCode).toBe(403);
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/password/change",
+      headers: { cookie: adminCookie, "x-csrf-token": csrfCache.get(adminCookie) ?? "" },
+      payload: body,
+    });
+    // The CSRF gate passed; the route rejects the wrong current password.
+    expect(accepted.statusCode).toBe(400);
+  });
+
+  it("requires a signed inbound webhook and rejects stale timestamps", async () => {
+    const secret = process.env.INBOUND_WEBHOOK_SECRET ?? "dev-inbound-webhook-secret";
+    const payload = {
+      from: "webhook-test@example.test",
+      subject: "Signed inbound webhook",
+      body: "Created through the signed webhook.",
+      messageId: `<signed-${Date.now()}@example.test>`,
+    };
+    const raw = JSON.stringify(payload);
+
+    const unsigned = await app.inject({
+      method: "POST",
+      url: "/api/t/acme/inbound/email",
+      payload,
+    });
+    expect(unsigned.statusCode).toBe(401);
+
+    const staleTimestamp = String(Math.floor(Date.now() / 1000) - 3600);
+    const stale = await app.inject({
+      method: "POST",
+      url: "/api/t/acme/inbound/email",
+      headers: {
+        "x-opspilot-timestamp": staleTimestamp,
+        "x-opspilot-signature": createHmac("sha256", secret).update(`${staleTimestamp}.${raw}`).digest("hex"),
+      },
+      payload,
+    });
+    expect(stale.statusCode).toBe(401);
+
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signed = await app.inject({
+      method: "POST",
+      url: "/api/t/acme/inbound/email",
+      headers: {
+        "x-opspilot-timestamp": timestamp,
+        "x-opspilot-signature": createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex"),
+      },
+      payload,
+    });
+    expect(signed.statusCode, signed.body).toBe(201);
   });
 
   it("does not let one tenant address another tenant's routes", async () => {
@@ -1254,7 +1335,7 @@ describe("ticket merge", () => {
       `insert into users (id, email, password_hash, display_name)
        values ($1, $2, $3, 'Employee Two')
        on conflict (email) do nothing`,
-      [emp2Id, emp2Email, hashPassword("Passw0rd!")],
+      [emp2Id, emp2Email, await hashPassword("Passw0rd!")],
     );
     await admin.query(
       `insert into memberships (tenant_id, user_id, role)

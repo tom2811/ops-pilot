@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { DEFAULT_ROLE_PERMISSIONS, type Permission, type Role } from "@opspilot/core";
 import { env } from "./env.js";
@@ -7,24 +7,68 @@ import { AppError } from "./errors.js";
 import type { AuthUser, TenantContext } from "./types.js";
 
 export const SESSION_COOKIE = "opspilot_session";
+export const CSRF_HEADER = "x-csrf-token";
 const SESSION_DAYS = 30;
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export async function createSession(
   userId: string,
   meta: { userAgent?: string | undefined; ip?: string | undefined } = {},
-): Promise<{ token: string; expiresAt: Date }> {
+): Promise<{ token: string; expiresAt: Date; csrfToken: string }> {
   const token = randomBytes(32).toString("base64url");
+  const csrfToken = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   await pool.query(
-    `insert into sessions (user_id, token_hash, expires_at, user_agent, ip)
-     values ($1, $2, $3, $4, $5)`,
-    [userId, hashToken(token), expiresAt, meta.userAgent ?? null, meta.ip ?? null],
+    `insert into sessions (user_id, token_hash, csrf_token, expires_at, user_agent, ip)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [userId, hashToken(token), csrfToken, expiresAt, meta.userAgent ?? null, meta.ip ?? null],
   );
-  return { token, expiresAt };
+  return { token, expiresAt, csrfToken };
+}
+
+/**
+ * Double-submit replacement that works across sites: the CSRF token is issued
+ * in the login response, kept in memory by the web app, and echoed back in a
+ * header. The token is bound to the session row, so a stolen cookie alone is
+ * not enough to mutate state.
+ */
+export async function assertCsrfToken(req: FastifyRequest): Promise<void> {
+  const sessionToken = req.cookies[SESSION_COOKIE];
+  if (!sessionToken) return;
+
+  const header = req.headers[CSRF_HEADER];
+  const provided = Array.isArray(header) ? header[0] : header;
+
+  const result = await pool.query<{ csrf_token: string }>(
+    "select csrf_token from sessions where token_hash = $1 and expires_at > now()",
+    [hashToken(sessionToken)],
+  );
+  const expected = result.rows[0]?.csrf_token;
+  // No live session: let the auth layer answer with 401 instead of leaking
+  // whether the cookie was valid.
+  if (!expected) return;
+  if (!provided || !safeEqual(provided, expected)) {
+    throw new AppError(403, "Invalid CSRF token");
+  }
+}
+
+export async function currentCsrfToken(req: FastifyRequest): Promise<string | null> {
+  const sessionToken = req.cookies[SESSION_COOKIE];
+  if (!sessionToken) return null;
+  const result = await pool.query<{ csrf_token: string }>(
+    "select csrf_token from sessions where token_hash = $1 and expires_at > now()",
+    [hashToken(sessionToken)],
+  );
+  return result.rows[0]?.csrf_token ?? null;
 }
 
 export function currentSessionHash(req: FastifyRequest): string | null {
@@ -60,11 +104,16 @@ export async function getSessionUser(req: FastifyRequest): Promise<AuthUser | nu
     display_name: string;
     is_platform_admin: boolean;
   }>(
-    `update sessions s set last_seen_at = now()
-     from users u
-     where s.token_hash = $1 and s.expires_at > now() and u.id = s.user_id and u.is_active
-     returning u.id, u.email, u.display_name,
-       exists (select 1 from platform_admins pa where pa.user_id = u.id) as is_platform_admin`,
+    `with touch as (
+       update sessions set last_seen_at = now()
+       where token_hash = $1 and expires_at > now()
+         and last_seen_at < now() - interval '5 minutes'
+     )
+     select u.id, u.email, u.display_name,
+       exists (select 1 from platform_admins pa where pa.user_id = u.id) as is_platform_admin
+     from sessions s
+     join users u on u.id = s.user_id
+     where s.token_hash = $1 and s.expires_at > now() and u.is_active`,
     [hashToken(token)],
   );
   const row = result.rows[0];
@@ -207,6 +256,8 @@ export async function getLoginUser(email: string): Promise<{
   displayName: string;
   passwordHash: string;
   isPlatformAdmin: boolean;
+  failedLoginAttempts: number;
+  lockedUntil: Date | null;
 } | null> {
   const result = await pool.query<{
     id: string;
@@ -214,8 +265,11 @@ export async function getLoginUser(email: string): Promise<{
     display_name: string;
     password_hash: string;
     is_platform_admin: boolean;
+    failed_login_attempts: number;
+    locked_until: Date | null;
   }>(
     `select u.id, u.email, u.display_name, u.password_hash,
+            u.failed_login_attempts, u.locked_until,
             exists (select 1 from platform_admins pa where pa.user_id = u.id) as is_platform_admin
      from users u where u.email = $1 and u.is_active`,
     [email],
@@ -228,7 +282,33 @@ export async function getLoginUser(email: string): Promise<{
     displayName: row.display_name,
     passwordHash: row.password_hash,
     isPlatformAdmin: row.is_platform_admin,
+    failedLoginAttempts: row.failed_login_attempts,
+    lockedUntil: row.locked_until,
   };
+}
+
+const LOCKOUT_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+export async function recordFailedLogin(userId: string): Promise<void> {
+  await pool.query(
+    `update users
+     set failed_login_attempts = failed_login_attempts + 1,
+         locked_until = case
+           when failed_login_attempts + 1 >= $2 then now() + ($3::text || ' minutes')::interval
+           else locked_until
+         end
+     where id = $1`,
+    [userId, LOCKOUT_ATTEMPTS, String(LOCKOUT_MINUTES)],
+  );
+}
+
+export async function clearFailedLogins(userId: string): Promise<void> {
+  await pool.query(
+    `update users set failed_login_attempts = 0, locked_until = null
+     where id = $1 and (failed_login_attempts <> 0 or locked_until is not null)`,
+    [userId],
+  );
 }
 
 export async function deleteSession(req: FastifyRequest): Promise<void> {

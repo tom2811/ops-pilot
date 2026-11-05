@@ -26,6 +26,12 @@ const envSchema = z.object({
   N8N_WEBHOOK_URL: z.string().min(1).optional(),
   N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
   INBOUND_WEBHOOK_SECRET: z.string().min(16).default("dev-inbound-webhook-secret"),
+  INBOUND_WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().positive().default(300),
+  INBOUND_WEBHOOK_ALLOW_LEGACY_SECRET: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
+  METRICS_TOKEN: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(16).optional()),
   SMTP_HOST: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
   SMTP_PORT: z.preprocess(
     (value) => (value === "" ? undefined : value),

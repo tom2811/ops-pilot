@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { humanize } from "./api.js";
 import { Icon } from "./ui.js";
 import type { ReportTrendPoint } from "./types.js";
@@ -221,3 +221,82 @@ export function TrendChart({ points }: { points: ReportTrendPoint[] }) {
     </div>
   );
 }
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallbackTitle?: string;
+  onReset?: () => void;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  override state: ErrorBoundaryState = {
+    hasError: false,
+    error: null,
+  };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  override componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error("Unhandled UI error caught by ErrorBoundary:", error, errorInfo);
+  }
+
+  reset = (): void => {
+    this.setState({ hasError: false, error: null });
+    this.props.onReset?.();
+  };
+
+  override render() {
+    if (this.state.hasError) {
+      return (
+        <div className="card" style={{ maxWidth: 540, margin: "40px auto", padding: 24, textAlign: "center" }}>
+          <h2 style={{ fontSize: "1.15rem", marginBottom: 8 }}>
+            {this.props.fallbackTitle ?? "Something went wrong"}
+          </h2>
+          <p className="muted" style={{ fontSize: "0.9rem", marginBottom: 20 }}>
+            An unexpected error occurred in this view. Your session and workspace data are safe.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 16 }}>
+            <button type="button" className="btn primary" onClick={this.reset}>
+              Try again
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => window.location.reload()}
+            >
+              Reload application
+            </button>
+          </div>
+          {this.state.error && (
+            <details style={{ textAlign: "left", fontSize: "0.8rem", marginTop: 12 }}>
+              <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Diagnostic information</summary>
+              <pre
+                style={{
+                  marginTop: 8,
+                  padding: 12,
+                  background: "var(--subtle-bg, rgba(0, 0, 0, 0.04))",
+                  borderRadius: 6,
+                  overflowX: "auto",
+                  fontFamily: "monospace",
+                }}
+              >
+                {this.state.error.message}
+                {"\n"}
+                {this.state.error.stack}
+              </pre>
+            </details>
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+

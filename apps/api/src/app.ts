@@ -8,6 +8,7 @@ import { ZodError } from "zod";
 import { env } from "./env.js";
 import { adminPool } from "./db.js";
 import { AppError } from "./errors.js";
+import { assertCsrfToken, SESSION_COOKIE } from "./auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { platformRoutes } from "./routes/platform.js";
@@ -20,6 +21,7 @@ import { notificationRoutes } from "./routes/notifications.js";
 import { auditRoutes } from "./routes/audit.js";
 import { attachmentRoutes } from "./routes/attachments.js";
 import { inboundRoutes } from "./routes/inbound.js";
+import { metricsRoutes } from "./routes/metrics.js";
 import "./types.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +34,22 @@ export async function buildApp() {
   });
 
   await app.register(cookie);
+  // Capture the raw JSON body so inbound webhooks can be HMAC-verified over
+  // exactly the bytes that were signed.
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+    const raw = typeof body === "string" ? body : body.toString("utf8");
+    req.rawBody = raw;
+    if (!raw) {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(raw));
+    } catch (error) {
+      done(error as Error);
+    }
+  });
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 10 } });
   const allowedOrigins = env.WEB_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean);
   await app.register(cors, {
@@ -49,6 +67,15 @@ export async function buildApp() {
   app.addHook("onRequest", async (req) => {
     const header = req.headers["x-correlation-id"];
     req.correlationId = typeof header === "string" && UUID.test(header) ? header : randomUUID();
+  });
+
+  const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  app.addHook("preHandler", async (req) => {
+    // Only session-cookie requests need CSRF protection. Webhook and automation
+    // callers authenticate with their own tokens and never carry this cookie.
+    if (!mutatingMethods.has(req.method)) return;
+    if (!req.cookies[SESSION_COOKIE]) return;
+    await assertCsrfToken(req);
   });
 
   app.addHook("onSend", async (req, reply, payload) => {
@@ -105,6 +132,7 @@ export async function buildApp() {
   await app.register(reportRoutes, { prefix: "/api" });
   await app.register(auditRoutes, { prefix: "/api" });
   await app.register(inboundRoutes, { prefix: "/api" });
+  await app.register(metricsRoutes, { prefix: "/api" });
 
   app.get("/api/health/live", async () => ({ ok: true }));
   app.get("/api/health", async (_req, reply) => {

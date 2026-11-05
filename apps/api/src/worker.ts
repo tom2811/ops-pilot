@@ -28,6 +28,11 @@ const workerEnv = z
     N8N_WEBHOOK_URL: z.string().url().optional(),
     N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
     PUBLIC_API_URL: z.string().url().default("http://localhost:3000/api"),
+    NODE_ENV: z.string().default("development"),
+    WORKER_ENABLE_MAILPIT: z
+      .string()
+      .default("false")
+      .transform((value) => value === "true"),
     WORKER_POLL_MS: z.coerce.number().int().positive().default(1500),
     MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
     SMTP_HOST: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
@@ -351,14 +356,62 @@ async function runMaintenance(): Promise<void> {
   if (escalations > 0) log("sla_escalations_sent", { count: escalations });
   const closed = await autoCloseTickets();
   if (closed > 0) log("tickets_auto_closed", { count: closed });
-}
 
-async function claimEvent(): Promise<OutboxRow | null> {
-  await pool.query(
+  const sessions = await pool.query(
+    "delete from sessions where expires_at < now() - interval '7 days'",
+  );
+  const resets = await pool.query(
+    "delete from password_reset_tokens where expires_at < now() - interval '30 days' or used_at < now() - interval '30 days'",
+  );
+  const recovered = await pool.query(
     `update outbox_events set status = 'pending', locked_until = null
      where status = 'sending' and locked_until < now()`,
   );
+  if ((sessions.rowCount ?? 0) + (resets.rowCount ?? 0) > 0) {
+    log("credentials_cleaned_up", { sessions: sessions.rowCount ?? 0, resets: resets.rowCount ?? 0 });
+  }
+  if ((recovered.rowCount ?? 0) > 0) {
+    log("outbox_leases_recovered", { count: recovered.rowCount });
+  }
+}
 
+/**
+ * Maintenance must run on exactly one worker at a time. The advisory lock is
+ * session-scoped, so it is taken and released on the same connection.
+ */
+async function runMaintenanceWithLock(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ locked: boolean }>(
+      "select pg_try_advisory_lock(hashtext('opspilot:maintenance')) as locked",
+    );
+    if (!result.rows[0]?.locked) return;
+    try {
+      await runMaintenance();
+    } finally {
+      await client.query("select pg_advisory_unlock(hashtext('opspilot:maintenance'))");
+    }
+  } finally {
+    client.release();
+  }
+}
+
+let lastHeartbeat = 0;
+
+async function heartbeat(): Promise<void> {
+  if (Date.now() - lastHeartbeat < 15_000) return;
+  lastHeartbeat = Date.now();
+  try {
+    await pool.query(
+      `insert into worker_heartbeat (id, last_seen_at) values ('default', now())
+       on conflict (id) do update set last_seen_at = now()`,
+    );
+  } catch (error) {
+    log("worker_heartbeat_failed", { error: String(error) });
+  }
+}
+
+async function claimEvent(): Promise<OutboxRow | null> {
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -751,6 +804,7 @@ type MailpitMessageDetail = {
 async function pollMailpitInbound(): Promise<void> {
   const mailpitUrl = getMailpitApiUrl();
   if (!mailpitUrl) return;
+  if (workerEnv.NODE_ENV === "production" && !workerEnv.WORKER_ENABLE_MAILPIT) return;
 
   try {
     const listRes = await fetch(`${mailpitUrl}/api/v1/messages?limit=20`, {
@@ -825,8 +879,9 @@ let nextMaintenance = 0;
 async function loop(): Promise<void> {
   while (running) {
     try {
+      await heartbeat();
       if (Date.now() >= nextMaintenance) {
-        await runMaintenance();
+        await runMaintenanceWithLock();
         nextMaintenance = Date.now() + workerEnv.MAINTENANCE_INTERVAL_MS;
       }
       await pollMailpitInbound();
