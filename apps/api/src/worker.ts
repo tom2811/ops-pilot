@@ -636,9 +636,17 @@ async function deadLetter(event: OutboxRow, reason: string): Promise<void> {
   log("event_dead", { eventId: event.id, eventType: event.event_type, reason });
 }
 
+async function skipEvent(event: OutboxRow, reason: string): Promise<void> {
+  await pool.query(
+    "update outbox_events set status = 'skipped', locked_until = null, last_error = $2, delivered_at = now() where id = $1",
+    [event.id, reason.slice(0, 2000)],
+  );
+  log("event_skipped", { eventId: event.id, eventType: event.event_type, reason });
+}
+
 async function deliver(event: OutboxRow): Promise<void> {
   if (event.event_type !== "ticket.created") {
-    await deadLetter(event, `No handler for ${event.event_type}`);
+    await skipEvent(event, `No handler for ${event.event_type}`);
     return;
   }
   if (!workerEnv.N8N_WEBHOOK_URL || !workerEnv.N8N_WEBHOOK_SECRET) {

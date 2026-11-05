@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { renderTemplate } from "@opspilot/core";
+import { renderTemplate, slaThresholdDue, type BusinessHoursConfig } from "@opspilot/core";
 import { writeAudit } from "../audit.js";
 import { enqueueEvent } from "../outbox.js";
+import { getBusinessHoursConfig } from "./tickets.js";
 
 type SlaBreachRow = {
   tenant_id: string;
@@ -206,6 +207,10 @@ type EscalationCandidate = {
   threshold_percent: number;
   target_type: "manager" | "team_lead" | "team";
   target_team_id: string | null;
+  created_at: Date;
+  sla_response_due_at: Date | null;
+  sla_resolution_due_at: Date | null;
+  business_hours_only: boolean;
 };
 
 async function escalationRecipients(
@@ -242,9 +247,12 @@ async function escalationRecipients(
 export async function applyEscalations(pool: pg.Pool): Promise<number> {
   const result = await pool.query<EscalationCandidate>(
     `select t.tenant_id, t.id, t.number, t.subject, t.assignee_id, t.team_id, t.version,
-            p.id as policy_id, p.sla_kind, p.threshold_percent, p.target_type, p.target_team_id
+            t.created_at, t.sla_response_due_at, t.sla_resolution_due_at,
+            p.id as policy_id, p.sla_kind, p.threshold_percent, p.target_type, p.target_team_id,
+            coalesce(sp.business_hours_only, false) as business_hours_only
      from tickets t
      join escalation_policies p on p.tenant_id = t.tenant_id and p.is_active
+     left join sla_policies sp on sp.tenant_id = t.tenant_id and sp.id = t.sla_policy_id
      where t.deleted_at is null
        and t.merged_into_ticket_id is null
        and t.closed_at is null
@@ -257,27 +265,50 @@ export async function applyEscalations(pool: pg.Pool): Promise<number> {
            and e.threshold_percent = p.threshold_percent
        )
        and (
-         (p.sla_kind = 'response' and t.sla_response_due_at is not null and t.first_responded_at is null
-          and now() >= case
-            when p.threshold_percent >= 100 then t.sla_response_due_at
-            else t.created_at + (p.threshold_percent / 100.0) * (t.sla_response_due_at - t.created_at)
-          end)
+         (p.sla_kind = 'response' and t.sla_response_due_at is not null and t.first_responded_at is null)
          or
-         (p.sla_kind = 'resolution' and t.sla_resolution_due_at is not null and t.resolved_at is null
-          and now() >= case
-            when p.threshold_percent >= 100 then t.sla_resolution_due_at
-            else t.created_at + (p.threshold_percent / 100.0) * (t.sla_resolution_due_at - t.created_at)
-          end)
+         (p.sla_kind = 'resolution' and t.sla_resolution_due_at is not null and t.resolved_at is null)
        )
      order by t.created_at
-     for update of t skip locked
-     limit 100`,
+     limit 500`,
   );
+
+  const now = Date.now();
+  const configCache = new Map<string, BusinessHoursConfig | undefined>();
+  async function businessHoursFor(tenantId: string): Promise<BusinessHoursConfig | undefined> {
+    if (!configCache.has(tenantId)) {
+      configCache.set(tenantId, await getBusinessHoursConfig(pool, tenantId));
+    }
+    return configCache.get(tenantId);
+  }
 
   let paged = 0;
   for (const ticket of result.rows) {
+    const dueAt = ticket.sla_kind === "response" ? ticket.sla_response_due_at : ticket.sla_resolution_due_at;
+    if (!dueAt) continue;
+    const config = ticket.business_hours_only ? await businessHoursFor(ticket.tenant_id) : undefined;
+    const thresholdAt = slaThresholdDue({
+      createdAt: ticket.created_at,
+      dueAt,
+      thresholdPercent: ticket.threshold_percent,
+      config,
+    });
+    if (thresholdAt.getTime() > now) continue;
+
     const recipientIds = [...new Set(await escalationRecipients(pool, ticket))];
     if (recipientIds.length === 0) continue;
+
+    // Claim the escalation before notifying so concurrent workers cannot page
+    // the same recipients twice for the same threshold.
+    const claim = await pool.query<{ id: string }>(
+      `insert into ticket_escalations (tenant_id, ticket_id, policy_id, threshold_percent)
+       values ($1, $2, $3, $4)
+       on conflict (ticket_id, policy_id, threshold_percent) do nothing
+       returning id`,
+      [ticket.tenant_id, ticket.id, ticket.policy_id, ticket.threshold_percent],
+    );
+    const escalationId = claim.rows[0]?.id;
+    if (!escalationId) continue;
 
     const bumped = await pool.query<{ version: number }>(
       `update tickets set version = version + 1, updated_at = now()
@@ -336,14 +367,17 @@ export async function applyEscalations(pool: pg.Pool): Promise<number> {
       notified += inserted.rowCount ?? 0;
     }
 
-    if (notified === 0) continue;
+    if (notified === 0) {
+      await pool.query("delete from ticket_escalations where tenant_id = $1 and id = $2", [
+        ticket.tenant_id,
+        escalationId,
+      ]);
+      continue;
+    }
 
     await pool.query(
-      `insert into ticket_escalations
-         (tenant_id, ticket_id, policy_id, threshold_percent, event_id)
-       values ($1, $2, $3, $4, $5)
-       on conflict (ticket_id, policy_id, threshold_percent) do nothing`,
-      [ticket.tenant_id, ticket.id, ticket.policy_id, ticket.threshold_percent, eventId],
+      "update ticket_escalations set event_id = $3 where tenant_id = $1 and id = $2",
+      [ticket.tenant_id, escalationId, eventId],
     );
     await writeAudit(
       pool,

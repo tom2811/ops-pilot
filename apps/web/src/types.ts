@@ -113,6 +113,17 @@ export type EscalationPolicy = {
   is_active: boolean;
 };
 
+export type Holiday = { holiday_on: string; name: string };
+
+export type EmailSettings = {
+  outbound_configured: boolean;
+  smtp_host: string | null;
+  smtp_port: number;
+  smtp_secure: boolean;
+  from_address: string | null;
+  inbound_domain: string | null;
+};
+
 export type Config = {
   teams: Team[];
   categories: Category[];
@@ -122,9 +133,11 @@ export type Config = {
   routing_rules: RoutingRule[];
   agents: Agent[];
   settings: TenantSettings | null;
+  holidays?: Holiday[];
   sla_policies: SlaPolicy[];
   canned_responses?: CannedResponse[];
   escalation_policies?: EscalationPolicy[];
+  email?: EmailSettings;
 };
 
 export type Ticket = {
@@ -178,6 +191,7 @@ export type TicketComment = {
   body: string;
   visibility: "public" | "internal";
   author_name: string;
+  channel?: "email" | "web";
   created_at: string;
 };
 
@@ -251,6 +265,7 @@ export type Attachment = {
 };
 
 export type TicketDetail = Ticket & {
+  source?: "email" | "web";
   comments: TicketComment[];
   history: StatusHistory[];
   assignments: AssignmentHistory[];
@@ -300,6 +315,7 @@ export type TenantUser = {
   team_ids: string[];
   custom_role_id: string | null;
   custom_role_name: string | null;
+  manager_user_id: string | null;
   created_at: string;
 };
 

@@ -295,6 +295,7 @@ export const membershipUpdateSchema = z.object({
   isActive: z.boolean().optional(),
   teamIds: z.array(z.string().uuid()).optional(),
   customRoleId: z.string().uuid().nullable().optional(),
+  managerUserId: z.string().uuid().nullable().optional(),
 });
 
 export const feedbackSchema = z.object({
@@ -835,6 +836,19 @@ export function slaWarnDue(input: {
 }): Date | null {
   const threshold = Math.min(input.newMinutes, Math.max(1, Math.round(input.newMinutes * 0.8)));
   return shiftedSlaDue({ ...input, newMinutes: threshold });
+}
+
+export function slaThresholdDue(input: {
+  createdAt: Date;
+  dueAt: Date;
+  thresholdPercent: number;
+  config?: BusinessHoursConfig;
+}): Date {
+  if (input.thresholdPercent >= 100) return input.dueAt;
+  if (input.dueAt.getTime() <= input.createdAt.getTime()) return input.dueAt;
+  const totalMinutes = businessMinutesBetween(input.createdAt, input.dueAt, input.config);
+  const thresholdMinutes = Math.max(0, Math.round((totalMinutes * input.thresholdPercent) / 100));
+  return addBusinessMinutes(input.createdAt, thresholdMinutes, input.config);
 }
 
 export function isSlaAtRisk(

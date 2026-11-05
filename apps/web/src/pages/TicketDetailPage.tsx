@@ -773,7 +773,7 @@ export function TicketDetailPage() {
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <h2>Request</h2>
                 <span className="badge subtle" style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
-                  Intake: via Email (support@{tenantSlug}.opspilot.dev)
+                  Intake: {detail.source === "email" ? "via Email" : "via Web"}
                 </span>
               </div>
               <span className="muted small">Updated {formatDate(detail.updated_at)}</span>
@@ -983,29 +983,22 @@ export function TicketDetailPage() {
               <EmptyState title="No comments yet">Start the conversation below.</EmptyState>
             ) : (
               <div className="comments">
-                {detail.comments.map((comment) => {
-                  const isRequester = comment.author_name === detail.requester_name;
-                  return (
-                    <article key={comment.id} className={`comment ${comment.visibility}`}>
-                      <header>
-                        <strong>{comment.author_name}</strong>
-                        {comment.visibility === "internal" ? (
-                          <span className="internal-tag">internal</span>
-                        ) : isRequester ? (
-                          <span className="badge subtle" style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
-                            via Email
-                          </span>
-                        ) : (
-                          <span className="badge subtle" style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
-                            Dispatched via SMTP
-                          </span>
-                        )}
-                        <span className="muted small">{formatDate(comment.created_at)}</span>
-                      </header>
-                      <p>{comment.body}</p>
-                    </article>
-                  );
-                })}
+                {detail.comments.map((comment) => (
+                  <article key={comment.id} className={`comment ${comment.visibility}`}>
+                    <header>
+                      <strong>{comment.author_name}</strong>
+                      {comment.visibility === "internal" ? (
+                        <span className="internal-tag">internal</span>
+                      ) : (
+                        <span className="badge subtle" style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
+                          {comment.channel === "email" ? "via Email" : "via Web"}
+                        </span>
+                      )}
+                      <span className="muted small">{formatDate(comment.created_at)}</span>
+                    </header>
+                    <p>{comment.body}</p>
+                  </article>
+                ))}
               </div>
             )}
 

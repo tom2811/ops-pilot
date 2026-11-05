@@ -13,6 +13,7 @@ import {
   parseEmailAddress,
   parseTicketNumberFromSubject,
   renderTemplate,
+  slaThresholdDue,
   stagePausesResolution,
 } from "./index.js";
 import { hashPassword, verifyPassword } from "./password.js";
@@ -242,6 +243,47 @@ describe("shiftedSlaDue", () => {
       config: hours,
     });
     expect(longer?.toISOString()).toBe("2026-10-26T11:00:00.000Z");
+  });
+});
+
+describe("slaThresholdDue", () => {
+  const hours = {
+    startHour: 9,
+    startMinute: 0,
+    endHour: 17,
+    endMinute: 0,
+    businessDays: [1, 2, 3, 4, 5],
+  };
+
+  it("uses calendar minutes for 24x7 policies", () => {
+    const result = slaThresholdDue({
+      createdAt: new Date("2026-10-26T09:00:00Z"),
+      dueAt: new Date("2026-10-26T10:00:00Z"),
+      thresholdPercent: 80,
+    });
+    expect(result.toISOString()).toBe("2026-10-26T09:48:00.000Z");
+  });
+
+  it("counts only business minutes for business-hours policies", () => {
+    // Fri 16:00 to Mon 10:00 is 120 business minutes. 50% lands at Fri 17:00,
+    // not at the calendar midpoint on Sunday.
+    const result = slaThresholdDue({
+      createdAt: new Date("2026-10-30T16:00:00Z"),
+      dueAt: new Date("2026-11-02T10:00:00Z"),
+      thresholdPercent: 50,
+      config: hours,
+    });
+    expect(result.toISOString()).toBe("2026-10-30T17:00:00.000Z");
+  });
+
+  it("returns the due date at 100 percent", () => {
+    const due = new Date("2026-10-26T10:00:00Z");
+    const result = slaThresholdDue({
+      createdAt: new Date("2026-10-26T09:00:00Z"),
+      dueAt: due,
+      thresholdPercent: 100,
+    });
+    expect(result.toISOString()).toBe(due.toISOString());
   });
 });
 

@@ -51,7 +51,7 @@ async function readUser(
 ): Promise<Record<string, unknown>> {
   const result = await client.query(
     `select m.user_id as id, u.email, u.display_name as name, m.role, m.is_active,
-            m.created_at, m.custom_role_id, cr.name as custom_role_name,
+            m.created_at, m.custom_role_id, cr.name as custom_role_name, m.manager_user_id,
             coalesce(jsonb_agg(tm.team_id) filter (where tm.team_id is not null), '[]'::jsonb) as team_ids
      from memberships m
      join users u on u.id = m.user_id
@@ -59,7 +59,7 @@ async function readUser(
      left join team_members tm on tm.tenant_id = m.tenant_id and tm.user_id = m.user_id
      where m.tenant_id = $1 and m.user_id = $2
      group by m.user_id, u.email, u.display_name, m.role, m.is_active, m.created_at,
-              m.custom_role_id, cr.name`,
+              m.custom_role_id, cr.name, m.manager_user_id`,
     [tenantId, userId],
   );
   const user = result.rows[0];
@@ -78,7 +78,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       const [users, invitations, customRoles] = await Promise.all([
         client.query(
           `select m.user_id as id, u.email, u.display_name as name, m.role, m.is_active,
-                  m.created_at, m.custom_role_id, cr.name as custom_role_name,
+                  m.created_at, m.custom_role_id, cr.name as custom_role_name, m.manager_user_id,
                   coalesce(jsonb_agg(tm.team_id) filter (where tm.team_id is not null), '[]'::jsonb) as team_ids
            from memberships m
            join users u on u.id = m.user_id
@@ -86,7 +86,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
            left join team_members tm on tm.tenant_id = m.tenant_id and tm.user_id = m.user_id
            where m.tenant_id = $1
            group by m.user_id, u.email, u.display_name, m.role, m.is_active, m.created_at,
-                    m.custom_role_id, cr.name
+                    m.custom_role_id, cr.name, m.manager_user_id
            order by m.is_active desc, u.display_name`,
           [tenantId],
         ),
@@ -340,7 +340,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       input.role === undefined &&
       input.isActive === undefined &&
       teamIds === undefined &&
-      input.customRoleId === undefined
+      input.customRoleId === undefined &&
+      input.managerUserId === undefined
     ) {
       throw badRequest("Nothing to update");
     }
@@ -388,11 +389,24 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (teamIds !== undefined) await validateTeams(client, tenantId, teamIds);
+      if (input.managerUserId !== undefined) {
+        if (input.managerUserId === params.userId) {
+          throw badRequest("A person cannot be their own manager");
+        }
+        if (input.managerUserId) {
+          const manager = await client.query(
+            "select 1 from memberships where tenant_id = $1 and user_id = $2 and is_active",
+            [tenantId, input.managerUserId],
+          );
+          if ((manager.rowCount ?? 0) === 0) throw badRequest("Unknown or inactive manager");
+        }
+      }
       await client.query(
         `update memberships
          set role = coalesce($3::user_role, role),
              is_active = coalesce($4::boolean, is_active),
-             custom_role_id = case when $6::boolean then $5::uuid else custom_role_id end
+             custom_role_id = case when $6::boolean then $5::uuid else custom_role_id end,
+             manager_user_id = case when $8::boolean then $7::uuid else manager_user_id end
          where tenant_id = $1 and user_id = $2`,
         [
           tenantId,
@@ -401,6 +415,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
           input.isActive ?? null,
           customRoleId ?? null,
           input.customRoleId !== undefined,
+          input.managerUserId ?? null,
+          input.managerUserId !== undefined,
         ],
       );
       if (teamIds !== undefined) {
@@ -430,6 +446,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
           isActive: updated.is_active,
           teamIds: updated.team_ids,
           customRoleId: updated.custom_role_id,
+          managerUserId: updated.manager_user_id,
         },
         req.correlationId,
       );

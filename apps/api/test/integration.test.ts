@@ -5,7 +5,6 @@ import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { hashPassword } from "@opspilot/core/password";
-import { applyEscalations, markSlaBreaches, markSlaWarnings } from "../src/domain/sla.js";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 120_000 });
 
@@ -38,6 +37,7 @@ let container: { getConnectionUri: () => string; stop: () => Promise<unknown> };
 let admin: pg.Pool;
 let app: App;
 let fixtures: Fixtures;
+let slaDomain: typeof import("../src/domain/sla.js");
 
 const cookieCache = new Map<string, string>();
 
@@ -105,6 +105,7 @@ beforeAll(async () => {
   }
 
   const { buildApp } = await import("../src/app.js");
+  slaDomain = await import("../src/domain/sla.js");
   app = await buildApp();
   await app.ready();
   admin = new pg.Pool({ connectionString: adminUrl, max: 4 });
@@ -690,8 +691,8 @@ describe("SLA clock stop rules", () => {
       [fixtures.acme.id, await fixtures.acmeStatus("closed"), createdAt, closedAt, dueAt, ticket.id],
     );
 
-    await markSlaBreaches(admin, "response");
-    await markSlaBreaches(admin, "resolution");
+    await slaDomain.markSlaBreaches(admin, "response");
+    await slaDomain.markSlaBreaches(admin, "resolution");
 
     const sla = await readSla(ticket.id);
     expect(sla.sla_response_breached_at).toBeNull();
@@ -715,8 +716,8 @@ describe("SLA clock stop rules", () => {
       [fixtures.acme.id, await fixtures.acmeStatus("closed"), createdAt, closedAt, dueAt, ticket.id],
     );
 
-    await markSlaBreaches(admin, "response");
-    await markSlaBreaches(admin, "resolution");
+    await slaDomain.markSlaBreaches(admin, "response");
+    await slaDomain.markSlaBreaches(admin, "resolution");
 
     const sla = await readSla(ticket.id);
     expect(sla.sla_response_breached_at).not.toBeNull();
@@ -763,8 +764,8 @@ describe("SLA clock stop rules", () => {
       [fixtures.acme.id, createdAt, dueAt, deleted.id],
     );
 
-    await markSlaBreaches(admin, "response");
-    await markSlaBreaches(admin, "resolution");
+    await slaDomain.markSlaBreaches(admin, "response");
+    await slaDomain.markSlaBreaches(admin, "resolution");
 
     const mergedSla = await readSla(merged.id);
     expect(mergedSla.sla_response_breached_at).toBeNull();
@@ -806,8 +807,8 @@ describe("SLA clock stop rules", () => {
       [fixtures.acme.id, createdAt, dueAt, open.id],
     );
 
-    await markSlaWarnings(admin, "resolution");
-    await markSlaWarnings(admin, "response");
+    await slaDomain.markSlaWarnings(admin, "resolution");
+    await slaDomain.markSlaWarnings(admin, "response");
 
     const closedSla = await readSla(closed.id);
     expect(closedSla.sla_resolution_warning_at).toBeNull();
@@ -913,7 +914,7 @@ describe("SLA escalation", () => {
       [fixtures.acme.id, ticket.id],
     );
 
-    const first = await applyEscalations(admin);
+    const first = await slaDomain.applyEscalations(admin);
     expect(first).toBeGreaterThanOrEqual(1);
     const pages = await admin.query<{ id: string; threshold_percent: number }>(
       `select id, threshold_percent from ticket_escalations
@@ -930,7 +931,7 @@ describe("SLA escalation", () => {
     );
     expect(notices.rows.map((row) => row.recipient_id)).toContain(lead.rows[0]?.lead_user_id);
 
-    const second = await applyEscalations(admin);
+    const second = await slaDomain.applyEscalations(admin);
     expect(second).toBeGreaterThanOrEqual(0);
     const again = await admin.query(
       "select id from ticket_escalations where tenant_id = $1 and ticket_id = $2",
@@ -977,7 +978,7 @@ describe("SLA escalation", () => {
       [fixtures.acme.id, ticket.id],
     );
 
-    await applyEscalations(admin);
+    await slaDomain.applyEscalations(admin);
     const pages = await admin.query(
       `select e.id from ticket_escalations e
        where e.tenant_id = $1 and e.ticket_id = $2 and e.policy_id = $3`,
@@ -1295,9 +1296,10 @@ describe("ticket merge", () => {
     // Attach a file to Ticket B
     const attId = "00000000-0000-0000-0000-000000000088";
     await admin.query(
-      `insert into ticket_attachments (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key)
-       values ($1, $2, $3, $4, 'document.pdf', 'application/pdf', 1024, 'acme/test/document.pdf')`,
-      [fixtures.acme.id, attId, ticketB.id, emp2Id],
+      `insert into ticket_attachments
+        (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key, content)
+       values ($1, $2, $3, $4, 'document.pdf', 'application/pdf', 4, 'acme/test/document.pdf', $5)`,
+      [fixtures.acme.id, attId, ticketB.id, emp2Id, Buffer.from("test")],
     );
 
     // Verify Employee 2 cannot read Ticket A before merge

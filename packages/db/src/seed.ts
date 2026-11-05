@@ -525,6 +525,62 @@ async function main() {
           params.updatedAt,
         ],
       );
+
+      const policy = (
+        await client.query<{
+          id: string;
+          response_minutes: number;
+          resolution_minutes: number;
+        }>(
+          `select id, response_minutes, resolution_minutes
+           from sla_policies
+           where tenant_id = $1 and is_active
+             and not coalesce(business_hours_only, false)
+             and (priority_id is null or priority_id = $2)
+           order by (priority_id is not null) desc, created_at
+           limit 1`,
+          [params.tenantId, params.priorityId],
+        )
+      ).rows[0];
+      if (policy) {
+        const createdAt = new Date(params.createdAt).getTime();
+        const responseDue = new Date(createdAt + policy.response_minutes * 60_000);
+        const resolutionDue = new Date(createdAt + policy.resolution_minutes * 60_000);
+        const responseWarn = new Date(createdAt + Math.round(policy.response_minutes * 0.8) * 60_000);
+        const resolutionWarn = new Date(createdAt + Math.round(policy.resolution_minutes * 0.8) * 60_000);
+        const responseStopped = params.firstRespondedAt ?? params.resolvedAt ?? params.closedAt;
+        const resolutionStopped = params.resolvedAt ?? params.closedAt;
+        const responseEnd = responseStopped ? new Date(responseStopped) : new Date();
+        const resolutionEnd = resolutionStopped ? new Date(resolutionStopped) : new Date();
+        const responseBreached = responseDue.getTime() < responseEnd.getTime();
+        const resolutionBreached = resolutionDue.getTime() < resolutionEnd.getTime();
+        await client.query(
+          `update tickets set
+             sla_policy_id = $3::uuid,
+             sla_response_due_at = $4::timestamptz,
+             sla_resolution_due_at = $5::timestamptz,
+             sla_response_warn_due_at = $6::timestamptz,
+             sla_resolution_warn_due_at = $7::timestamptz,
+             sla_response_warning_at = case when $8::boolean then $6::timestamptz else null end,
+             sla_resolution_warning_at = case when $9::boolean then $7::timestamptz else null end,
+             sla_response_breached_at = case when $10::boolean then $4::timestamptz else null end,
+             sla_resolution_breached_at = case when $11::boolean then $5::timestamptz else null end
+           where tenant_id = $1 and id = $2`,
+          [
+            params.tenantId,
+            params.id,
+            policy.id,
+            responseDue,
+            resolutionDue,
+            responseWarn,
+            resolutionWarn,
+            responseWarn.getTime() < responseEnd.getTime(),
+            resolutionWarn.getTime() < resolutionEnd.getTime(),
+            responseBreached,
+            resolutionBreached,
+          ],
+        );
+      }
     }
 
     // ==========================================

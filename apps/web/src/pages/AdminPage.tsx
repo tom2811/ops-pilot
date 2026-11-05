@@ -10,6 +10,7 @@ import type {
   Config,
   CustomField,
   NotificationTemplate,
+  EscalationPolicy,
   Priority,
   RoutingRule,
   SlaPolicy,
@@ -57,6 +58,7 @@ export function AdminPage() {
 
   const [teamName, setTeamName] = useState("");
   const [teamSlug, setTeamSlug] = useState("");
+  const [teamLead, setTeamLead] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [categorySlug, setCategorySlug] = useState("");
   const [categoryTeam, setCategoryTeam] = useState("");
@@ -71,6 +73,18 @@ export function AdminPage() {
   const [slaResponse, setSlaResponse] = useState("60");
   const [slaResolution, setSlaResolution] = useState("480");
   const [slaBusinessHours, setSlaBusinessHours] = useState(false);
+
+  const [escalationName, setEscalationName] = useState("");
+  const [escalationKind, setEscalationKind] = useState<"response" | "resolution">("response");
+  const [escalationThreshold, setEscalationThreshold] = useState("80");
+  const [escalationTargetType, setEscalationTargetType] = useState<"manager" | "team_lead" | "team">(
+    "manager",
+  );
+  const [escalationTeam, setEscalationTeam] = useState("");
+  const [editingEscalationId, setEditingEscalationId] = useState("");
+
+  const [holidayDate, setHolidayDate] = useState("");
+  const [holidayName, setHolidayName] = useState("");
 
   const [fieldLabel, setFieldLabel] = useState("");
   const [fieldKeyValue, setFieldKeyValue] = useState("");
@@ -174,13 +188,14 @@ export function AdminPage() {
 
   function submitTeam(event: FormEvent): void {
     event.preventDefault();
-    const body = { name: teamName, slug: teamSlug || slugify(teamName) };
+    const body = { name: teamName, slug: teamSlug || slugify(teamName), leadUserId: teamLead || null };
     void run(
       () => (editingTeamId ? patch(`/t/${tenantSlug}/teams/${editingTeamId}`, body) : post(`/t/${tenantSlug}/teams`, body)),
       editingTeamId ? "Team updated." : "Team created.",
     ).then(() => {
       setTeamName("");
       setTeamSlug("");
+      setTeamLead("");
       setEditingTeamId("");
     });
   }
@@ -248,6 +263,40 @@ export function AdminPage() {
       setSlaName("");
       setSlaBusinessHours(false);
       setEditingSlaId("");
+    });
+  }
+
+  function submitEscalation(event: FormEvent): void {
+    event.preventDefault();
+    const body = {
+      name: escalationName,
+      slaKind: escalationKind,
+      thresholdPercent: Number(escalationThreshold),
+      targetType: escalationTargetType,
+      targetTeamId: escalationTargetType === "team" ? escalationTeam || null : null,
+    };
+    void run(
+      () =>
+        editingEscalationId
+          ? patch(`/t/${tenantSlug}/escalation-policies/${editingEscalationId}`, body)
+          : post(`/t/${tenantSlug}/escalation-policies`, body),
+      editingEscalationId ? "Escalation policy updated." : "Escalation policy created.",
+    ).then(() => {
+      setEscalationName("");
+      setEscalationThreshold("80");
+      setEditingEscalationId("");
+      setEscalationTeam("");
+    });
+  }
+
+  function submitHoliday(event: FormEvent): void {
+    event.preventDefault();
+    void run(
+      () => post(`/t/${tenantSlug}/holidays`, { date: holidayDate, name: holidayName }),
+      "Holiday saved.",
+    ).then(() => {
+      setHolidayDate("");
+      setHolidayName("");
     });
   }
 
@@ -364,10 +413,22 @@ export function AdminPage() {
     });
   }
 
+  function removeHoliday(date: string, name: string): void {
+    void confirm({
+      title: `Remove ${name}?`,
+      body: "SLA clocks will use the regular business calendar for that date.",
+      confirmLabel: "Remove",
+      tone: "danger",
+    }).then((confirmed) => {
+      if (confirmed) void run(() => del(`/t/${tenantSlug}/holidays/${date}`), "Holiday removed.");
+    });
+  }
+
   function editTeam(team: Team): void {
     setEditingTeamId(team.id);
     setTeamName(team.name);
     setTeamSlug(team.slug);
+    setTeamLead(team.lead_user_id ?? "");
   }
 
   function editCategory(category: Category): void {
@@ -413,7 +474,17 @@ export function AdminPage() {
     setSlaBusinessHours(Boolean(policy.business_hours_only));
   }
 
+  function editEscalation(policy: EscalationPolicy): void {
+    setEditingEscalationId(policy.id);
+    setEscalationName(policy.name);
+    setEscalationKind(policy.sla_kind);
+    setEscalationThreshold(String(policy.threshold_percent));
+    setEscalationTargetType(policy.target_type);
+    setEscalationTeam(policy.target_team_id ?? "");
+  }
+
   const teamNameById = new Map(config.teams.map((team) => [team.id, team.name]));
+  const agentNameById = new Map(config.agents.map((agent) => [agent.id, agent.name]));
   const priorityNameById = new Map(config.priorities.map((priority) => [priority.id, priority.label]));
   const categoryNameById = new Map(config.categories.map((category) => [category.id, category.name]));
 
@@ -433,6 +504,8 @@ export function AdminPage() {
         <a href="#categories">Categories</a>
         <a href="#priorities">Priorities</a>
         <a href="#sla-policies">SLA policies</a>
+        <a href="#escalations">Escalations</a>
+        <a href="#holidays">Holidays</a>
         <a href="#routing-rules">Routing rules</a>
         <a href="#custom-fields">Custom fields</a>
         <a href="#canned-responses">Canned responses</a>
@@ -548,7 +621,10 @@ export function AdminPage() {
                   <li key={team.id}>
                     <div>
                       <strong>{team.name}</strong>
-                      <span className="muted small">{team.slug}</span>
+                      <span className="muted small">
+                        {team.slug}
+                        {team.lead_user_id ? ` · Lead: ${agentNameById.get(team.lead_user_id) ?? "Unknown"}` : " · No lead"}
+                      </span>
                     </div>
                     <ConfigActions
                       onEdit={() => editTeam(team)}
@@ -577,12 +653,24 @@ export function AdminPage() {
                 Slug
                 <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
               </label>
+              <label className="span-2">
+                Team lead
+                <Select
+                  ariaLabel="Team lead"
+                  value={teamLead}
+                  onChange={setTeamLead}
+                  options={[
+                    { value: "", label: "No lead" },
+                    ...config.agents.map((agent) => ({ value: agent.id, label: agent.name })),
+                  ]}
+                />
+              </label>
               <div className="form-actions span-2">
                 <button className="button secondary" disabled={busy}>
                   {editingTeamId ? "Update team" : "Create team"}
                 </button>
                 {editingTeamId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); }}>
+                  <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); setTeamLead(""); }}>
                     Cancel
                   </button>
                 )}
@@ -878,6 +966,190 @@ export function AdminPage() {
         </div>
       </section>
 
+      <section className="card" id="escalations">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Escalation policies</h2>
+              <span className="badge subtle">{config.escalation_policies?.length ?? 0}</span>
+            </div>
+            {(config.escalation_policies?.length ?? 0) === 0 ? (
+              <EmptyState title="No escalation policies">
+                Add one to notify a manager, team lead, or team before an SLA is breached.
+              </EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.escalation_policies?.map((policy) => (
+                  <li key={policy.id}>
+                    <div>
+                      <strong>{policy.name}</strong>
+                      <span className="muted small">
+                        {humanize(policy.sla_kind)} · {policy.threshold_percent}% ·{" "}
+                        {policy.target_type === "team"
+                          ? `Team: ${teamNameById.get(policy.target_team_id ?? "") ?? "Unknown"}`
+                          : humanize(policy.target_type)}
+                      </span>
+                    </div>
+                    <ConfigActions
+                      onEdit={() => editEscalation(policy)}
+                      onRemove={() => deactivate(`/t/${tenantSlug}/escalation-policies/${policy.id}`, policy.name)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
+            <h2>{editingEscalationId ? "Edit escalation policy" : "Add an escalation policy"}</h2>
+            <form className="form-grid" onSubmit={submitEscalation}>
+              <label className="span-2">
+                Name
+                <input
+                  value={escalationName}
+                  onChange={(event) => setEscalationName(event.target.value)}
+                  required
+                />
+              </label>
+              <div className="inline-fields span-2">
+                <label>
+                  SLA clock
+                  <Select
+                    ariaLabel="Escalation SLA clock"
+                    value={escalationKind}
+                    onChange={(next) => setEscalationKind(next as "response" | "resolution")}
+                    options={[
+                      { value: "response", label: "Response" },
+                      { value: "resolution", label: "Resolution" },
+                    ]}
+                  />
+                </label>
+                <label>
+                  Threshold %
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={escalationThreshold}
+                    onChange={(event) => setEscalationThreshold(event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
+              <label className="span-2">
+                Notify
+                <Select
+                  ariaLabel="Escalation target"
+                  value={escalationTargetType}
+                  onChange={(next) =>
+                    setEscalationTargetType(next as "manager" | "team_lead" | "team")
+                  }
+                  options={[
+                    { value: "manager", label: "Ticket assignee's manager" },
+                    { value: "team_lead", label: "Ticket team's lead" },
+                    { value: "team", label: "Specific team" },
+                  ]}
+                />
+              </label>
+              {escalationTargetType === "team" && (
+                <label className="span-2">
+                  Team
+                  <Select
+                    ariaLabel="Escalation team"
+                    value={escalationTeam}
+                    onChange={setEscalationTeam}
+                    options={[
+                      { value: "", label: "Choose a team" },
+                      ...config.teams.map((team) => ({ value: team.id, label: team.name })),
+                    ]}
+                  />
+                </label>
+              )}
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  {editingEscalationId ? "Update escalation policy" : "Create escalation policy"}
+                </button>
+                {editingEscalationId && (
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => {
+                      setEditingEscalationId("");
+                      setEscalationName("");
+                      setEscalationThreshold("80");
+                      setEscalationTeam("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section className="card" id="holidays">
+        <div className="admin-split">
+          <div className="admin-split-col">
+            <div className="admin-split-head">
+              <h2>Holidays</h2>
+              <span className="badge subtle">{config.holidays?.length ?? 0}</span>
+            </div>
+            {(config.holidays?.length ?? 0) === 0 ? (
+              <EmptyState title="No holidays">
+                Business-hours SLA clocks will pause on listed holidays.
+              </EmptyState>
+            ) : (
+              <ul className="config-list">
+                {config.holidays?.map((holiday) => (
+                  <li key={holiday.holiday_on}>
+                    <div>
+                      <strong>{holiday.name}</strong>
+                      <span className="muted small">{holiday.holiday_on}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="button ghost small"
+                      onClick={() => removeHoliday(holiday.holiday_on, holiday.name)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-split-col admin-split-form">
+            <h2>Add a holiday</h2>
+            <form className="form-grid" onSubmit={submitHoliday}>
+              <label>
+                Date
+                <input
+                  type="date"
+                  value={holidayDate}
+                  onChange={(event) => setHolidayDate(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Name
+                <input
+                  value={holidayName}
+                  onChange={(event) => setHolidayName(event.target.value)}
+                  placeholder="Public holiday"
+                  required
+                />
+              </label>
+              <div className="form-actions span-2">
+                <button className="button secondary" disabled={busy}>
+                  Add holiday
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
       <section className="card" id="routing-rules">
         <div className="admin-split">
           <div className="admin-split-col">
@@ -1163,18 +1435,25 @@ export function AdminPage() {
               <h2>Outbound SMTP Service</h2>
               <p className="muted">Transactional mail delivery via Resend / SMTP worker.</p>
             </div>
-            <span className="badge status-open" style={{ alignSelf: "flex-start" }}>
-              Active · Connected
+            <span
+              className={`badge ${config.email?.outbound_configured ? "status-open" : "status-pending"}`}
+              style={{ alignSelf: "flex-start" }}
+            >
+              {config.email?.outbound_configured ? "Configured" : "Not configured"}
             </span>
           </div>
           <div className="stack" style={{ gap: "12px", marginTop: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
               <span className="muted">SMTP Provider</span>
-              <strong>smtp.resend.com (Port 465 SSL)</strong>
+              <strong>
+                {config.email?.smtp_host
+                  ? `${config.email.smtp_host} (Port ${config.email.smtp_port}${config.email.smtp_secure ? " SSL" : " STARTTLS"})`
+                  : "Not configured"}
+              </strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
               <span className="muted">Sender Address</span>
-              <strong>OpsPilot &lt;onboarding@resend.dev&gt;</strong>
+              <strong>{config.email?.from_address ?? "Not configured"}</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
               <span className="muted">Delivery Queue</span>
@@ -1182,7 +1461,9 @@ export function AdminPage() {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span className="muted">Security</span>
-              <span>TLSv1.3 verified · Secret encrypted</span>
+              <span>
+                {config.email?.smtp_secure ? "TLS on connect" : "STARTTLS when available"} · Credentials from environment
+              </span>
             </div>
           </div>
         </section>
@@ -1193,14 +1474,21 @@ export function AdminPage() {
               <h2>Inbound Email Intake</h2>
               <p className="muted">Convert incoming emails directly into tracked support tickets.</p>
             </div>
-            <span className="badge status-open" style={{ alignSelf: "flex-start" }}>
-              Listening
+            <span
+              className={`badge ${config.email?.inbound_domain ? "status-open" : "status-pending"}`}
+              style={{ alignSelf: "flex-start" }}
+            >
+              {config.email?.inbound_domain ? "Configured" : "Domain not set"}
             </span>
           </div>
           <div className="stack" style={{ gap: "12px", marginTop: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
               <span className="muted">Support Address</span>
-              <strong>support@{tenantSlug}.opspilot.dev</strong>
+              <strong>
+                {config.email?.inbound_domain
+                  ? `support@${tenantSlug}.${config.email.inbound_domain}`
+                  : "Set INBOUND_EMAIL_DOMAIN"}
+              </strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
               <span className="muted">Webhook Endpoint</span>

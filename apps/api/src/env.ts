@@ -26,6 +26,20 @@ const envSchema = z.object({
   N8N_WEBHOOK_URL: z.string().min(1).optional(),
   N8N_WEBHOOK_SECRET: z.string().min(1).optional(),
   INBOUND_WEBHOOK_SECRET: z.string().min(16).default("dev-inbound-webhook-secret"),
+  SMTP_HOST: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
+  SMTP_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().positive().default(587),
+  ),
+  SMTP_SECURE: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  ),
+  SMTP_FROM: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
+  INBOUND_EMAIL_DOMAIN: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().trim().min(1).max(200).optional(),
+  ),
   UPLOAD_DIR: z.string().min(1).default("./data/uploads"),
   LOG_LEVEL: z.string().default("info"),
 });

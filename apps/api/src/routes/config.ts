@@ -12,6 +12,7 @@ import {
 import { requireAuth, requirePermission, requireTenant } from "../auth.js";
 import { withTenant } from "../db.js";
 import { writeAudit } from "../audit.js";
+import { env } from "../env.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 
 const slug = z
@@ -187,6 +188,14 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         sla_policies: slaPolicies.rows,
         canned_responses: cannedResponses.rows,
         escalation_policies: escalationPolicies.rows,
+        email: {
+          outbound_configured: Boolean(env.SMTP_HOST),
+          smtp_host: env.SMTP_HOST ?? null,
+          smtp_port: env.SMTP_PORT,
+          smtp_secure: env.SMTP_SECURE,
+          from_address: env.SMTP_FROM ?? null,
+          inbound_domain: env.INBOUND_EMAIL_DOMAIN ?? null,
+        },
       };
     });
   });

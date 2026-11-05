@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, stat, unlink } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
-import { pipeline } from "node:stream/promises";
+import { createReadStream } from "node:fs";
+import { stat, unlink } from "node:fs/promises";
+import { basename, resolve, sep } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireTenant } from "../auth.js";
@@ -10,6 +9,8 @@ import { withTenant } from "../db.js";
 import { assertCanRead, loadTicket } from "../domain/tickets.js";
 import { env } from "../env.js";
 import { badRequest, forbidden, notFound } from "../errors.js";
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const ticketParams = z.object({ tenantSlug: z.string().min(1), ticketId: z.string().uuid() });
 const attachmentParams = z.object({
@@ -25,6 +26,7 @@ type AttachmentRow = {
   content_type: string;
   size: number;
   storage_key: string;
+  content: Buffer | null;
   created_at: Date;
   uploader_name: string;
 };
@@ -59,39 +61,30 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     const file = await req.file();
     if (!file) badRequest("Choose a file to upload");
 
-    const id = randomUUID();
-    const directory = resolve(env.UPLOAD_DIR, tenantId, ticketId);
-    const storageKey = join(tenantId, ticketId, id);
-    const target = join(directory, id);
-    await mkdir(directory, { recursive: true });
-
+    let content: Buffer;
     try {
-      await pipeline(file.file, createWriteStream(target));
-      if (file.file.truncated) {
-        await unlink(target).catch(() => undefined);
-        badRequest("File is larger than 10 MB");
-      }
-      const info = await stat(target);
-      if (info.size > 10 * 1024 * 1024) {
-        await unlink(target).catch(() => undefined);
-        badRequest("File is larger than 10 MB");
-      }
-
-      return await withTenant(tenantId, userId, async (client) => {
-        const result = await client.query<AttachmentRow>(
-          `insert into ticket_attachments
-            (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key)
-           values ($1, $2, $3, $4, $5, $6, $7, $8)
-           returning id, ticket_id, uploader_id, filename, content_type, size, storage_key, created_at,
-                     (select display_name from users where id = $4) as uploader_name`,
-          [tenantId, id, ticketId, userId, safeName(file.filename), file.mimetype, info.size, storageKey],
-        );
-        return result.rows[0];
-      });
-    } catch (error) {
-      await unlink(target).catch(() => undefined);
-      throw error;
+      content = await file.toBuffer();
+    } catch {
+      return badRequest("File is larger than 10 MB");
     }
+    if (file.file.truncated || content.length > MAX_ATTACHMENT_BYTES) {
+      badRequest("File is larger than 10 MB");
+    }
+
+    const id = randomUUID();
+    const storageKey = `${tenantId}/${ticketId}/${id}`;
+
+    return withTenant(tenantId, userId, async (client) => {
+      const result = await client.query<AttachmentRow>(
+        `insert into ticket_attachments
+          (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key, content)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         returning id, ticket_id, uploader_id, filename, content_type, size, storage_key, created_at,
+                   (select display_name from users where id = $4) as uploader_name`,
+        [tenantId, id, ticketId, userId, safeName(file.filename), file.mimetype, content.length, storageKey, content],
+      );
+      return result.rows[0];
+    });
   });
 
   app.get("/t/:tenantSlug/attachments/:attachmentId/download", async (req, reply) => {
@@ -101,7 +94,7 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     const attachment = await withTenant(tenantId, userId, async (client) => {
       const result = await client.query<AttachmentRow>(
         `select a.id, a.ticket_id, a.uploader_id, a.filename, a.content_type, a.size, a.storage_key,
-                a.created_at, u.display_name as uploader_name
+                a.content, a.created_at, u.display_name as uploader_name
          from ticket_attachments a
          join users u on u.id = a.uploader_id
          where a.tenant_id = $1 and a.id = $2`,
@@ -115,6 +108,13 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
       return row;
     });
 
+    reply.type(attachment.content_type);
+    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
+
+    if (attachment.content !== null) {
+      return reply.send(attachment.content);
+    }
+
     const root = resolve(env.UPLOAD_DIR);
     const target = resolve(env.UPLOAD_DIR, attachment.storage_key);
     if (!target.startsWith(`${root}${sep}`)) notFound("Attachment not found");
@@ -124,8 +124,6 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
       notFound("Attachment file is missing");
     }
 
-    reply.type(attachment.content_type);
-    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
     return reply.send(createReadStream(target));
   });
 
@@ -133,9 +131,9 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     const { userId, tenantId, role } = context(req);
     const { attachmentId } = attachmentParams.parse(req.params);
 
-    const storageKey = await withTenant(tenantId, userId, async (client) => {
+    const stored = await withTenant(tenantId, userId, async (client) => {
       const result = await client.query<AttachmentRow>(
-        `select id, ticket_id, uploader_id, filename, content_type, size, storage_key
+        `select id, ticket_id, uploader_id, filename, content_type, size, storage_key, content
          from ticket_attachments where tenant_id = $1 and id = $2`,
         [tenantId, attachmentId],
       );
@@ -148,10 +146,12 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
         forbidden("Only the uploader or an administrator can delete this attachment");
       }
       await client.query("delete from ticket_attachments where tenant_id = $1 and id = $2", [tenantId, attachmentId]);
-      return attachment.storage_key;
+      return { storageKey: attachment.storage_key, hasBlob: attachment.content !== null };
     });
 
-    await unlink(resolve(env.UPLOAD_DIR, storageKey)).catch(() => undefined);
+    if (!stored.hasBlob) {
+      await unlink(resolve(env.UPLOAD_DIR, stored.storageKey)).catch(() => undefined);
+    }
     return reply.status(204).send();
   });
 }

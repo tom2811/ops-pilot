@@ -16,7 +16,13 @@ import type {
 
 type UsersResponse = { users: TenantUser[]; invitations: PendingInvitation[]; custom_roles: CustomRole[] };
 
-type Draft = { role: Role; isActive: boolean; teamIds: string[]; customRoleId: string | null };
+type Draft = {
+  role: Role;
+  isActive: boolean;
+  teamIds: string[];
+  customRoleId: string | null;
+  managerUserId: string | null;
+};
 
 const ROLES: Role[] = ["tenant_admin", "agent", "employee"];
 
@@ -79,6 +85,7 @@ export function UsersPage() {
                 isActive: user.is_active,
                 teamIds: user.team_ids,
                 customRoleId: user.custom_role_id,
+                managerUserId: user.manager_user_id,
               },
             ]),
           ),
@@ -124,6 +131,7 @@ export function UsersPage() {
         isActive: draft.isActive,
         teamIds: draft.teamIds,
         customRoleId: draft.customRoleId,
+        managerUserId: draft.managerUserId,
       });
       toast.success(`${user.name} updated.`);
       setRefresh((value) => value + 1);
@@ -135,6 +143,7 @@ export function UsersPage() {
           isActive: user.is_active,
           teamIds: user.team_ids,
           customRoleId: user.custom_role_id,
+          managerUserId: user.manager_user_id,
         },
       }));
       setError(errorMessage(caught));
@@ -379,7 +388,7 @@ export function UsersPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Person</th><th>Role</th><th>Teams</th><th>Active</th><th /></tr>
+              <tr><th>Person</th><th>Role</th><th>Teams</th><th>Manager</th><th>Active</th><th /></tr>
             </thead>
             <tbody>
               {users.map((user) => {
@@ -388,6 +397,7 @@ export function UsersPage() {
                   isActive: user.is_active,
                   teamIds: user.team_ids,
                   customRoleId: user.custom_role_id,
+                  managerUserId: user.manager_user_id,
                 };
                 const roleValue = draft.customRoleId ? `custom:${draft.customRoleId}` : `builtin:${draft.role}`;
                 return (
@@ -440,6 +450,19 @@ export function UsersPage() {
                           </label>
                         ))}
                       </div>
+                    </td>
+                    <td>
+                      <Select
+                        ariaLabel={`Manager for ${user.name}`}
+                        value={draft.managerUserId ?? ""}
+                        onChange={(value) => updateDraft(user.id, { managerUserId: value || null })}
+                        options={[
+                          { value: "", label: "No manager" },
+                          ...users
+                            .filter((other) => other.id !== user.id)
+                            .map((other) => ({ value: other.id, label: other.name })),
+                        ]}
+                      />
                     </td>
                     <td>
                       <input

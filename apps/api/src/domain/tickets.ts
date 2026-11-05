@@ -703,6 +703,10 @@ export async function updateTicket(
        sla_resolution_due_at = case when $8 then $11 else sla_resolution_due_at end,
        sla_response_warn_due_at = case when $8 then $12 else sla_response_warn_due_at end,
        sla_resolution_warn_due_at = case when $8 then $13 else sla_resolution_warn_due_at end,
+       sla_response_warning_at = case when $8 then null else sla_response_warning_at end,
+       sla_resolution_warning_at = case when $8 then null else sla_resolution_warning_at end,
+       sla_response_breached_at = case when $8 then null else sla_response_breached_at end,
+       sla_resolution_breached_at = case when $8 then null else sla_resolution_breached_at end,
        version = version + 1,
        updated_at = now()
      where tenant_id = $1 and id = $2 and version = $14`,
@@ -1308,15 +1312,28 @@ export async function ticketDetail(
     body: string;
     visibility: "public" | "internal";
     author_name: string;
+    channel: "email" | "web";
     created_at: Date;
   }>(
-    `select c.id, c.body, c.visibility, u.display_name as author_name, c.created_at
+    `select c.id, c.body, c.visibility, u.display_name as author_name, c.created_at,
+            case when exists (
+              select 1 from inbound_emails i
+              where i.tenant_id = c.tenant_id and i.comment_id = c.id
+            ) then 'email' else 'web' end as channel
      from ticket_comments c
      join users u on u.id = c.author_id
      where c.tenant_id = $1 and c.ticket_id = $2
        and ($3 = false or c.visibility = 'public')
      order by c.created_at`,
     [tenantId, ticketId, role === "employee"],
+  );
+
+  const source = await client.query<{ source: "email" | "web" }>(
+    `select case when exists (
+       select 1 from inbound_emails i
+       where i.tenant_id = $1 and i.ticket_id = $2 and i.action = 'ticket_created'
+     ) then 'email' else 'web' end as source`,
+    [tenantId, ticketId],
   );
 
   const history = await client.query<{
@@ -1429,6 +1446,7 @@ export async function ticketDetail(
   return {
     ...ticket,
     custom_fields: customFields,
+    source: source.rows[0]?.source ?? "web",
     comments: comments.rows,
     history: history.rows,
     assignments: assignments.rows,
@@ -1850,9 +1868,10 @@ export async function mergeTickets(
     content_type: string;
     size: number;
     storage_key: string;
+    content: Buffer | null;
     created_at: Date;
   }>(
-    `select id, uploader_id, filename, content_type, size, storage_key, created_at
+    `select id, uploader_id, filename, content_type, size, storage_key, content, created_at
      from ticket_attachments
      where tenant_id = $1 and ticket_id = $2`,
     [tenantId, secondary.id],
@@ -1861,19 +1880,34 @@ export async function mergeTickets(
   for (const att of secAttachments.rows) {
     const newId = randomUUID();
     const newStorageKey = `${tenantId}/${primary.id}/${randomUUID()}_${att.filename}`;
-    const oldPath = resolve(env.UPLOAD_DIR, att.storage_key);
-    const newPath = resolve(env.UPLOAD_DIR, newStorageKey);
-    try {
-      await mkdir(dirname(newPath), { recursive: true });
-      await copyFile(oldPath, newPath);
-    } catch {
-      // Source file may not exist on disk in test environments
+    if (att.content === null) {
+      // Legacy disk-backed attachment: only copy the row when the file exists,
+      // otherwise the primary ticket would point at a broken attachment.
+      const oldPath = resolve(env.UPLOAD_DIR, att.storage_key);
+      const newPath = resolve(env.UPLOAD_DIR, newStorageKey);
+      try {
+        await mkdir(dirname(newPath), { recursive: true });
+        await copyFile(oldPath, newPath);
+      } catch {
+        continue;
+      }
     }
     await client.query(
       `insert into ticket_attachments
-        (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key, created_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [tenantId, newId, primary.id, att.uploader_id, att.filename, att.content_type, att.size, newStorageKey, att.created_at],
+        (tenant_id, id, ticket_id, uploader_id, filename, content_type, size, storage_key, content, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        tenantId,
+        newId,
+        primary.id,
+        att.uploader_id,
+        att.filename,
+        att.content_type,
+        att.size,
+        newStorageKey,
+        att.content,
+        att.created_at,
+      ],
     );
   }
 
