@@ -181,8 +181,8 @@ stateDiagram-v2
 
 ### 4. Enterprise Security Hardening
 
-- **CSRF Double-Submit Mitigation**: Because cross-site deployments between web app and API origins require `SameSite=None` session cookies, Fastify implements a preHandler hook asserting matching `x-csrf-token` headers for all mutating HTTP verbs (`POST`, `PUT`, `PATCH`, `DELETE`). The token is cryptographically bound to the session row in PostgreSQL.
-- **HMAC-SHA256 Inbound Webhook Signing**: Inbound email webhooks require an `x-opspilot-timestamp` and `x-opspilot-signature`. Signatures are computed over the raw HTTP body bytes. Replay attacks are blocked by enforcing an adjustable 5-minute skew window (`INBOUND_WEBHOOK_TOLERANCE_SECONDS`).
+- **Session-Bound CSRF Tokens**: Because cross-site deployments between web app and API origins require `SameSite=None` session cookies, Fastify issues a per-session CSRF token at login and returns it from `GET /auth/me`. The web app echoes it in `x-csrf-token` on every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`), and the API compares it against the token stored on the session row in PostgreSQL.
+- **HMAC-SHA256 Inbound Webhook Signing**: Inbound email webhooks require an `x-opspilot-timestamp` and `x-opspilot-signature`. Signatures are computed over `<timestamp>.<raw body bytes>`, so the timestamp cannot be swapped. Replay attacks are blocked by enforcing an adjustable 5-minute skew window (`INBOUND_WEBHOOK_TOLERANCE_SECONDS`).
 - **Timing-Safe Asynchronous Password Security**: Uses Node.js asynchronous `scrypt` hashing with unique salts, eliminating event loop blocking under authentication bursts. Unknown accounts are verified against a synthetic `DUMMY_HASH` to eliminate response latency discrepancies and prevent user enumeration. Accounts automatically lock for 15 minutes upon 5 consecutive failed attempts.
 - **Cluster-Safe Advisory Locks**: Clustered worker instances synchronize maintenance cycles (SLA breach detection, escalations, credential purging) via PostgreSQL session advisory locks (`pg_try_advisory_lock`), eliminating race conditions without requiring an external Redis cluster.
 
