@@ -62,7 +62,12 @@ export async function buildApp() {
     },
     credentials: true,
   });
-  await app.register(rateLimit, { global: false });
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    allowList: ["127.0.0.1", "::1"],
+  });
 
   app.addHook("onRequest", async (req) => {
     const header = req.headers["x-correlation-id"];
