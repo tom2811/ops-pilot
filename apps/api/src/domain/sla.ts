@@ -158,10 +158,10 @@ export async function markSlaWarnings(
         "select subject, body from notification_templates where tenant_id = $1 and key = 'sla_warning' and is_active",
         [ticket.tenant_id],
       );
-      const subjectTmpl = tmpl.rows[0]?.subject ?? "SLA warning: Ticket #{{number}} approaching breach threshold";
+      const subjectTmpl = tmpl.rows[0]?.subject ?? "[OpsPilot Alert] SLA Threshold Warning: Ticket #{{number}} - {{subject}}";
       const bodyTmpl =
         tmpl.rows[0]?.body ??
-        'Ticket #{{number}} ("{{subject}}") has reached 80% of its {{kind}} SLA limit. Please take action before the SLA breaches at {{dueAt}}.';
+        "Attention Service Desk Team,\n\nTicket #{{number}} (\"{{subject}}\") has reached 80% of its target {{kind}} SLA limit.\n\nTarget Details:\n- Ticket Reference: #{{number}}\n- Incident Subject: {{subject}}\n- Milestone: {{kind}} SLA Limit\n- Target Deadline: {{dueAt}}\n\nImmediate operator review is recommended to prevent an SLA breach.\n\nOpsPilot Automated Governance Engine";
       const vars = {
         number: ticket.number,
         subject: ticket.subject,
@@ -338,10 +338,10 @@ export async function applyEscalations(pool: pg.Pool): Promise<number> {
       "select subject, body from notification_templates where tenant_id = $1 and key = 'sla_escalated' and is_active",
       [ticket.tenant_id],
     );
-    const subjectTmpl = tmpl.rows[0]?.subject ?? "SLA escalation: Ticket #{{number}}";
+    const subjectTmpl = tmpl.rows[0]?.subject ?? "[OpsPilot Escalation] SLA Escalation Notice: Ticket #{{number}} - {{subject}}";
     const bodyTmpl =
       tmpl.rows[0]?.body ??
-      'Ticket #{{number}} ("{{subject}}") has reached {{threshold}}% of its {{kind}} SLA and was escalated.';
+      "URGENT: Incident SLA Escalation Notice\n\nTicket #{{number}} (\"{{subject}}\") has reached {{threshold}}% of its allotted {{kind}} SLA window and has been automatically escalated per operational policy.\n\nEscalation Telemetry:\n- Ticket Reference: #{{number}}\n- Incident Subject: {{subject}}\n- SLA Metric: {{kind}} SLA\n- Threshold Triggered: {{threshold}}%\n\nAssigned team leads and engineering managers have been notified. Please access the OpsPilot console to review accountability and transition status.\n\nOpsPilot Automated Governance Engine";
     const vars = {
       number: ticket.number,
       subject: ticket.subject,

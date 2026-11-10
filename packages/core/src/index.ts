@@ -53,38 +53,38 @@ export const DEFAULT_SLA_POLICIES: Array<{
 export const DEFAULT_NOTIFICATION_TEMPLATES: Array<{ key: string; subject: string; body: string }> = [
   {
     key: "ticket_created",
-    subject: "Ticket #{{number}} created",
-    body: "We received \"{{subject}}\". Your request is queued with the service team.",
+    subject: "[OpsPilot] Request Logged: Ticket #{{number}} - {{subject}}",
+    body: "Hello,\n\nYour service request has been logged with the OpsPilot Service Desk. A support engineer will review your ticket and begin triage shortly.\n\nTicket Summary:\n- Reference: Ticket #{{number}}\n- Subject: {{subject}}\n- Status: Queued for Triage\n\nYou can reply directly to this email to provide additional context, logs, or attachments.\n\nBest regards,\nOpsPilot Service Desk Operations",
   },
   {
     key: "ticket_replied",
-    subject: "New reply on ticket #{{number}}",
-    body: "{{authorName}} replied to \"{{subject}}\":\n\n{{body}}",
+    subject: "[OpsPilot Update] New Reply on Ticket #{{number}} - {{subject}}",
+    body: "Hello,\n\n{{authorName}} posted an update on ticket #{{number}} (\"{{subject}}\"):\n\n---\n{{body}}\n---\n\nTo post a response or submit additional details, please reply directly to this email.\n\nBest regards,\nOpsPilot Service Desk Operations",
   },
   {
     key: "ticket_resolved",
-    subject: "Ticket #{{number}} resolved",
-    body: "\"{{subject}}\" has been resolved.\n\n{{summary}}",
+    subject: "[OpsPilot Resolved] Ticket #{{number}} - {{subject}}",
+    body: "Hello,\n\nTicket #{{number}} (\"{{subject}}\") has been resolved by our service engineering team.\n\nResolution Summary:\n{{summary}}\n\nIf this issue persists or you require further assistance, simply reply directly to this email to reopen your ticket.\n\nBest regards,\nOpsPilot Service Desk Operations",
   },
   {
     key: "sla_warning",
-    subject: "SLA warning: Ticket #{{number}} approaching breach threshold",
-    body: "Ticket #{{number}} (\"{{subject}}\") has reached 80% of its {{kind}} SLA limit. Please take action before the SLA breaches at {{dueAt}}.",
+    subject: "[OpsPilot Alert] SLA Threshold Warning: Ticket #{{number}} - {{subject}}",
+    body: "Attention Service Desk Team,\n\nTicket #{{number}} (\"{{subject}}\") has reached 80% of its target {{kind}} SLA limit.\n\nTarget Details:\n- Ticket Reference: #{{number}}\n- Incident Subject: {{subject}}\n- Milestone: {{kind}} SLA Limit\n- Target Deadline: {{dueAt}}\n\nImmediate operator review is recommended to prevent an SLA breach.\n\nOpsPilot Automated Governance Engine",
   },
   {
     key: "pending_chaser",
-    subject: "Reminder: Waiting for your reply on ticket #{{number}}",
-    body: "Hello {{requesterName}},\n\nYour ticket #{{number}} (\"{{subject}}\") is currently waiting on your input. If no reply is received, the ticket will be automatically resolved.\n\nPlease reply directly to this email to provide an update.",
+    subject: "[OpsPilot Reminder] Action Required: Ticket #{{number}} - {{subject}}",
+    body: "Dear {{requesterName}},\n\nWe are following up regarding your ticket #{{number}} (\"{{subject}}\"), which is currently waiting on additional information from you.\n\nTo ensure timely resolution and prevent automatic ticket closure, please review the request and reply directly to this email with your update.\n\nThank you for your cooperation.\n\nOpsPilot Service Desk Operations",
   },
   {
     key: "sla_escalated",
-    subject: "SLA escalation: Ticket #{{number}}",
-    body: "Ticket #{{number}} (\"{{subject}}\") has reached {{threshold}}% of its {{kind}} SLA and was escalated.",
+    subject: "[OpsPilot Escalation] SLA Escalation Notice: Ticket #{{number}} - {{subject}}",
+    body: "URGENT: Incident SLA Escalation Notice\n\nTicket #{{number}} (\"{{subject}}\") has reached {{threshold}}% of its allotted {{kind}} SLA window and has been automatically escalated per operational policy.\n\nEscalation Telemetry:\n- Ticket Reference: #{{number}}\n- Incident Subject: {{subject}}\n- SLA Metric: {{kind}} SLA\n- Threshold Triggered: {{threshold}}%\n\nAssigned team leads and engineering managers have been notified. Please access the OpsPilot console to review accountability and transition status.\n\nOpsPilot Automated Governance Engine",
   },
   {
     key: "ticket_merged",
-    subject: "Ticket #{{secondaryNumber}} was merged into #{{number}}",
-    body: "Your ticket #{{secondaryNumber}} (\"{{secondarySubject}}\") was merged into #{{number}} (\"{{subject}}\"). Follow the conversation on the surviving ticket.",
+    subject: "[OpsPilot Notice] Ticket #{{secondaryNumber}} Merged into #{{number}}",
+    body: "Hello,\n\nPlease be advised that ticket #{{secondaryNumber}} (\"{{secondarySubject}}\") has been consolidated and merged into master ticket #{{number}} (\"{{subject}}\").\n\nAll subsequent communications, audit events, and resolution notes will be tracked under Ticket #{{number}}.\n\nBest regards,\nOpsPilot Service Desk Operations",
   },
 ];
 
