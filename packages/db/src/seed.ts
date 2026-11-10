@@ -35,8 +35,8 @@ const tenants: TenantSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000000001",
     slug: "acme",
-    name: "Siam Telecom & Cloud (Thailand)",
-    prefix: "ACM",
+    name: "Apex Cloud Systems",
+    prefix: "APX",
     timezone: "Asia/Bangkok",
     teams: [
       { slug: "service-desk", name: "Service Desk" },
@@ -71,8 +71,8 @@ const tenants: TenantSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000000002",
     slug: "globex",
-    name: "Irrawaddy Broadband & Telecom (Myanmar)",
-    prefix: "GLX",
+    name: "Nexus Global Logistics",
+    prefix: "NEX",
     timezone: "Asia/Yangon",
     teams: [{ slug: "it-ops", name: "IT Operations" }],
     categories: [
@@ -113,18 +113,72 @@ type UserSeed = {
   memberships: Array<{ tenantSlug: string; role: Role }>;
 };
 
+const isTestEnv =
+  process.env.NODE_ENV === "test" || process.env.CI === "true" || process.env.INCLUDE_TEST_ACCOUNTS === "true";
+
+const testUsers: UserSeed[] = isTestEnv
+  ? [
+      {
+        id: "00000000-0000-4000-8000-000000004001",
+        email: "admin@acme.test",
+        name: "Acme Admin Test",
+        memberships: [
+          { tenantSlug: "acme", role: "tenant_admin" },
+          { tenantSlug: "globex", role: "tenant_admin" },
+        ],
+      },
+      {
+        id: "00000000-0000-4000-8000-000000004002",
+        email: "agent@acme.test",
+        name: "Acme Agent Test",
+        memberships: [
+          { tenantSlug: "acme", role: "agent" },
+          { tenantSlug: "globex", role: "agent" },
+        ],
+      },
+      {
+        id: "00000000-0000-4000-8000-000000004003",
+        email: "employee@acme.test",
+        name: "Acme Employee Test",
+        memberships: [{ tenantSlug: "acme", role: "employee" }],
+      },
+      {
+        id: "00000000-0000-4000-8000-000000004004",
+        email: "admin@globex.test",
+        name: "Globex Admin Test",
+        memberships: [{ tenantSlug: "globex", role: "tenant_admin" }],
+      },
+      {
+        id: "00000000-0000-4000-8000-000000004005",
+        email: "agent@globex.test",
+        name: "Globex Agent Test",
+        memberships: [{ tenantSlug: "globex", role: "agent" }],
+      },
+      {
+        id: "00000000-0000-4000-8000-000000004006",
+        email: "employee@globex.test",
+        name: "Globex Employee Test",
+        memberships: [{ tenantSlug: "globex", role: "employee" }],
+      },
+    ]
+  : [];
+
 const TEAM_ASSIGNMENTS: Record<string, string[]> = {
+  "oaksoe.thein01@gmail.com": ["service-desk", "network", "it-ops"],
+  "oaksoe.thein01+agent@gmail.com": ["service-desk", "network", "it-ops"],
+  "oaksoe.thein01+nexus@gmail.com": ["it-ops"],
+  "oaksoe.thein01+nexusagent@gmail.com": ["it-ops"],
   "admin@acme.test": ["service-desk", "network", "it-ops"],
   "agent@acme.test": ["service-desk", "network", "it-ops"],
   "admin@globex.test": ["it-ops"],
   "agent@globex.test": ["it-ops"],
 };
 
-const users: UserSeed[] = [
+const primaryUsers: UserSeed[] = [
   {
     id: "00000000-0000-4000-8000-000000001001",
-    email: "admin@acme.test",
-    name: "Somchai Prasert",
+    email: "oaksoe.thein01@gmail.com",
+    name: "Oak Soe Thein",
     memberships: [
       { tenantSlug: "acme", role: "tenant_admin" },
       { tenantSlug: "globex", role: "tenant_admin" },
@@ -132,8 +186,8 @@ const users: UserSeed[] = [
   },
   {
     id: "00000000-0000-4000-8000-000000001002",
-    email: "agent@acme.test",
-    name: "Nattaporn Srisai",
+    email: "oaksoe.thein01+agent@gmail.com",
+    name: "Alex Mercer",
     memberships: [
       { tenantSlug: "acme", role: "agent" },
       { tenantSlug: "globex", role: "agent" },
@@ -141,26 +195,26 @@ const users: UserSeed[] = [
   },
   {
     id: "00000000-0000-4000-8000-000000001003",
-    email: "employee@acme.test",
-    name: "Kanya Wongsuwan",
+    email: "oaksoe.thein01+requester@gmail.com",
+    name: "Elena Vance",
     memberships: [{ tenantSlug: "acme", role: "employee" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002001",
-    email: "admin@globex.test",
-    name: "Aung Kyaw",
+    email: "oaksoe.thein01+nexus@gmail.com",
+    name: "Marcus Brody",
     memberships: [{ tenantSlug: "globex", role: "tenant_admin" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002002",
-    email: "agent@globex.test",
-    name: "Thida Win",
+    email: "oaksoe.thein01+nexusagent@gmail.com",
+    name: "Sarah Chen",
     memberships: [{ tenantSlug: "globex", role: "agent" }],
   },
   {
     id: "00000000-0000-4000-8000-000000002003",
-    email: "employee@globex.test",
-    name: "Min Thu",
+    email: "oaksoe.thein01+nexusreq@gmail.com",
+    name: "David Kim",
     memberships: [{ tenantSlug: "globex", role: "employee" }],
   },
   {
@@ -170,6 +224,8 @@ const users: UserSeed[] = [
     memberships: [],
   },
 ];
+
+const users: UserSeed[] = [...primaryUsers, ...testUsers];
 
 function first<T>(rows: T[]): T {
   const row = rows[0];
@@ -194,7 +250,15 @@ async function main() {
     await client.query(`delete from tickets where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from audit_log where tenant_id in (${seedTenantIds})`);
     await client.query("delete from tenants where slug in ('acme', 'globex')");
-    const seedEmails = users.map((u) => `'${u.email}'`).join(",");
+    const seedEmails = [
+      ...users.map((u) => `'${u.email}'`),
+      "'admin@acme.test'",
+      "'agent@acme.test'",
+      "'employee@acme.test'",
+      "'admin@globex.test'",
+      "'agent@globex.test'",
+      "'employee@globex.test'",
+    ].join(",");
     await client.query(
       `delete from user_invitations where invited_by in (select id from users where email in (${seedEmails}))`,
     );
@@ -1743,7 +1807,7 @@ async function main() {
     }
 
     await client.query("commit");
-    console.log("seeded Siam Telecom & Cloud (Thailand) and Irrawaddy Broadband & Telecom (Myanmar)");
+    console.log("seeded Apex Cloud Systems and Nexus Global Logistics");
   } catch (error) {
     await client.query("rollback");
     throw error;

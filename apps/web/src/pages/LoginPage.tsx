@@ -4,17 +4,11 @@ import { errorMessage } from "../api.js";
 import { useAuth } from "../auth.js";
 import { BrandMark } from "../ui.js";
 
-const DEMO_ACCOUNTS = [
-  { label: "Acme agent", email: "agent@acme.test", hint: "queue, assignment, lifecycle" },
-  { label: "Acme admin", email: "admin@acme.test", hint: "workspace configuration" },
-  { label: "Acme employee", email: "employee@acme.test", hint: "requester view" },
-];
-
 export function LoginPage() {
   const { user, loading, login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("agent@acme.test");
-  const [password, setPassword] = useState("Passw0rd!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,25 +85,6 @@ export function LoginPage() {
             </button>
             <Link className="small" to="/forgot-password">Forgot your password?</Link>
           </form>
-
-          <div className="demo-accounts">
-            <p className="muted small">Demo password: Passw0rd!</p>
-            {DEMO_ACCOUNTS.map((account) => (
-              <button
-                key={account.email}
-                className="demo-account"
-                disabled={busy}
-                onClick={() => {
-                  setEmail(account.email);
-                  setPassword("Passw0rd!");
-                  void signIn(account.email, "Passw0rd!");
-                }}
-              >
-                <span>{account.label}</span>
-                <span className="muted small">{account.hint}</span>
-              </button>
-            ))}
-          </div>
         </div>
       </section>
     </div>
