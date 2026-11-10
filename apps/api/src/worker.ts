@@ -703,7 +703,7 @@ async function deliver(event: OutboxRow): Promise<void> {
     return;
   }
   if (!workerEnv.N8N_WEBHOOK_URL || !workerEnv.N8N_WEBHOOK_SECRET) {
-    await deadLetter(event, "n8n is not configured");
+    await skipEvent(event, "n8n is not configured");
     return;
   }
 

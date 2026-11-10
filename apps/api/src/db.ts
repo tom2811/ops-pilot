@@ -5,13 +5,13 @@ export const pool = new pg.Pool({
   connectionString: env.APP_DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 10_000,
 });
 export const adminPool = new pg.Pool({
   connectionString: env.ADMIN_DATABASE_URL,
   max: 5,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 10_000,
 });
 
 pool.on("error", (error) => {

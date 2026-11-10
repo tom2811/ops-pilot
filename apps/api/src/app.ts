@@ -139,8 +139,8 @@ export async function buildApp() {
   await app.register(inboundRoutes, { prefix: "/api" });
   await app.register(metricsRoutes, { prefix: "/api" });
 
-  app.get("/api/health/live", async () => ({ ok: true }));
-  app.get("/api/health", async (_req, reply) => {
+  app.get("/api/health/live", { config: { rateLimit: false } }, async () => ({ ok: true }));
+  app.get("/api/health", { config: { rateLimit: false } }, async (_req, reply) => {
     try {
       await adminPool.query("select 1");
       return { ok: true, database: "ok", uptime: Math.round(process.uptime()) };
