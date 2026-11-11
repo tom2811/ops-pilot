@@ -596,13 +596,20 @@ export function TicketsPage() {
                           {formatTicketNumber(prefix, ticket.number)}
                         </Link>
                       </td>
-                      <td>
+                      <td className="col-subject">
                         <Link className="subject-link" to={`/t/${tenantSlug}/tickets/${ticket.id}`}>
                           {ticket.subject}
                         </Link>
                         <div className="muted small">
                           {ticket.category_name}
                           {ticket.team_name ? ` · ${ticket.team_name}` : ""}
+                        </div>
+                        <div className="ticket-mobile-meta">
+                          <StatusBadge label={ticket.status_label} stage={ticket.status_stage} />
+                          <PriorityBadge
+                            label={priorityMeta?.label ?? ticket.priority_label}
+                            color={priorityMeta?.color}
+                          />
                         </div>
                       </td>
                       <td className="col-status">

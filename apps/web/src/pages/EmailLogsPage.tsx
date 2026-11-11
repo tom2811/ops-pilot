@@ -251,68 +251,70 @@ export function EmailLogsPage() {
           </button>
         </div>
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: "160px" }}>Channel</th>
-                <th style={{ width: "260px" }}>Sender / Recipient</th>
-                <th>Subject & Trigger</th>
-                <th style={{ width: "200px" }}>Delivery Status</th>
-                <th style={{ width: "200px" }}>Provider ID / Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && !data ? (
-                <SkeletonRows cols={5} rows={6} />
-              ) : pagedEvents.length === 0 ? (
+        {data && pagedEvents.length === 0 && !loading ? (
+          <EmptyState title={search ? "No matching events" : "No email activity yet"}>
+            {search
+              ? "No events matching your search criteria."
+              : "No email activity recorded yet."}
+          </EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table className="email-log-table">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="muted" style={{ textAlign: "center", padding: "28px" }}>
-                    {search ? "No events matching your search criteria." : "No email activity recorded yet."}
-                  </td>
+                  <th className="col-email-channel">Channel</th>
+                  <th className="col-email-party">Sender / Recipient</th>
+                  <th className="col-subject">Subject &amp; Trigger</th>
+                  <th className="col-email-status">Delivery Status</th>
+                  <th className="col-email-provider">Provider ID / Time</th>
                 </tr>
-              ) : (
-                pagedEvents.map((item) => (
-                  <tr key={item.key}>
-                    <td>
-                      <span className={`badge ${item.kind === "outbound" ? "subtle" : "status-in_progress"}`}>
-                        {item.kind === "outbound" ? "Outbound SMTP" : "Inbound Intake"}
-                      </span>
-                    </td>
-                    <td>
-                      <strong>{item.actor}</strong>
-                    </td>
-                    <td>
-                      <span>{item.subject}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${item.statusTone}`}>
-                        {item.statusLabel}
-                      </span>
-                      {item.errorDetail && (
-                        <div
-                          className="muted small mono"
-                          style={{ marginTop: "3px", cursor: item.fullError ? "help" : "default" }}
-                          title={item.fullError || item.errorDetail}
-                        >
-                          {item.errorDetail}
-                        </div>
-                      )}
-                    </td>
-                    <td className="muted small">
-                      {item.providerId && (
-                        <div className="mono" style={{ marginBottom: "2px" }}>
-                          {item.providerId}
-                        </div>
-                      )}
-                      <div>{formatDate(item.timestamp)}</div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {loading && !data ? (
+                  <SkeletonRows cols={5} rows={6} />
+                ) : (
+                  pagedEvents.map((item) => (
+                    <tr key={item.key}>
+                      <td data-label="Channel">
+                        <span className={`badge ${item.kind === "outbound" ? "subtle" : "status-in_progress"}`}>
+                          {item.kind === "outbound" ? "Outbound SMTP" : "Inbound Intake"}
+                        </span>
+                      </td>
+                      <td data-label="Sender / Recipient">
+                        <strong>{item.actor}</strong>
+                      </td>
+                      <td className="col-email-subject" data-label="Subject">
+                        <span>{item.subject}</span>
+                      </td>
+                      <td data-label="Delivery status">
+                        <span className={`badge ${item.statusTone}`}>
+                          {item.statusLabel}
+                        </span>
+                        {item.errorDetail && (
+                          <div
+                            className="muted small mono"
+                            style={{ marginTop: "3px", cursor: item.fullError ? "help" : "default" }}
+                            title={item.fullError || item.errorDetail}
+                          >
+                            {item.errorDetail}
+                          </div>
+                        )}
+                      </td>
+                      <td className="col-email-provider muted small" data-label="Provider / Time">
+                        {item.providerId && (
+                          <div className="mono" style={{ marginBottom: "2px" }}>
+                            {item.providerId}
+                          </div>
+                        )}
+                        <div>{formatDate(item.timestamp)}</div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {data && (
           <div className="list-foot">
