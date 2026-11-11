@@ -3935,25 +3935,6 @@ body.sheet-open {
     margin-left: auto;
   }
 
-  /* Comfortable touch targets on phones and tablets. */
-  .icon-btn {
-    width: 44px;
-    height: 44px;
-  }
-
-  .pager-btn {
-    width: 44px;
-    height: 44px;
-  }
-
-  .button {
-    height: 44px;
-  }
-
-  .button.small {
-    height: 40px;
-  }
-
   .table-wrap td:first-child a {
     display: inline-block;
     padding: 8px 0;
