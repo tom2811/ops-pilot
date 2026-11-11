@@ -514,7 +514,7 @@ export function TicketsPage() {
           {role !== "employee" && (
             <button
               type="button"
-              className="button secondary small"
+              className="button secondary"
               onClick={() => void handleExport()}
               disabled={exporting}
               aria-label="Export tickets to CSV"
