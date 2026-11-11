@@ -167,7 +167,7 @@ const testUsers: UserSeed[] = isTestEnv
 const TEAM_ASSIGNMENTS: Record<string, string[]> = {
   "oaksoe.thein01@gmail.com": ["service-desk", "network", "it-ops"],
   "oaksoe.thein01+agent@gmail.com": ["service-desk", "network", "it-ops"],
-  "guest-agent@opspilot.dev": ["service-desk", "network"],
+  "guest-agent@opspilot.dev": ["service-desk", "network", "it-ops"],
   "oaksoe.thein01+nexus@gmail.com": ["it-ops"],
   "oaksoe.thein01+nexusagent@gmail.com": ["it-ops"],
   "admin@acme.test": ["service-desk", "network", "it-ops"],
@@ -235,6 +235,11 @@ const primaryUsers: UserSeed[] = [
         tenantSlug: "acme",
         role: "agent",
         customRoleId: "00000000-0000-4000-8000-000000006001",
+      },
+      {
+        tenantSlug: "globex",
+        role: "agent",
+        customRoleId: "00000000-0000-4000-8000-000000006002",
       },
     ],
   },
@@ -428,13 +433,21 @@ async function main() {
       );
     }
 
-    const guestRoleId = "00000000-0000-4000-8000-000000006001";
-    await client.query(
-      `insert into custom_roles (id, tenant_id, name, base_role, permissions)
-       values ($1, $2, 'NOC Reviewer', 'agent', '["tickets.assign", "reports.view", "audit.view"]'::jsonb)
-       on conflict (tenant_id, name) do update set permissions = excluded.permissions`,
-      [guestRoleId, tenantIdBySlug.get("acme")],
-    );
+    const guestRoles = [
+      { id: "00000000-0000-4000-8000-000000006001", slug: "acme" },
+      { id: "00000000-0000-4000-8000-000000006002", slug: "globex" },
+    ];
+    for (const r of guestRoles) {
+      const tId = tenantIdBySlug.get(r.slug);
+      if (tId) {
+        await client.query(
+          `insert into custom_roles (id, tenant_id, name, base_role, permissions)
+           values ($1, $2, 'NOC Reviewer', 'agent', '["tickets.assign", "reports.view", "audit.view"]'::jsonb)
+           on conflict (tenant_id, name) do update set permissions = excluded.permissions`,
+          [r.id, tId],
+        );
+      }
+    }
 
     for (const user of users) {
       await client.query(

@@ -78,9 +78,10 @@ export function createMailer(config: MailerConfig | null): Mailer | null {
       async send(input) {
         const html = input.html || formatEmailHtml(input.subject, input.text);
         let recipient = input.to;
-        if (config.from.includes("resend.dev") && recipient.includes("+") && recipient.endsWith("@gmail.com")) {
-          // In Resend sandbox mode with onboarding@resend.dev, map plus-aliases to the primary sandbox owner inbox
-          recipient = recipient.replace(/\+[^@]+@gmail\.com$/, "@gmail.com");
+        if (config.from.includes("resend.dev")) {
+          // In Resend sandbox mode with onboarding@resend.dev, Resend strictly allows sending only to the verified account owner inbox.
+          // Map all recipients to the primary verified inbox to prevent Resend HTTP 403 / SMTP 550 test-mode rejections.
+          recipient = "oaksoe.thein01@gmail.com";
         }
 
         const payload: Record<string, unknown> = {

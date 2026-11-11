@@ -38,9 +38,33 @@ type LogEvent = {
   statusTone: string;
   statusLabel: string;
   errorDetail: string | null;
+  fullError?: string | null;
   providerId: string | null;
   timestamp: string;
 };
+
+function parseErrorDetail(error: string): { label: string; full: string } {
+  if (error.includes("You can only send testing emails")) {
+    return {
+      label: "550: Sandbox recipient restricted",
+      full: "Resend sandbox mode allows delivery only to the registered account owner. To send to any recipient, verify a custom domain in Resend.",
+    };
+  }
+  if (error.includes("ENOTFOUND")) {
+    return { label: "DNS: Host unreachable", full: error };
+  }
+  if (error.includes("ETIMEDOUT")) {
+    return { label: "Timeout: Connection timed out", full: error };
+  }
+  if (error.includes("ECONNREFUSED")) {
+    return { label: "Connection: Port refused", full: error };
+  }
+  const match = error.match(/SMTP (\d{3})/i);
+  if (match) {
+    return { label: `SMTP ${match[1]}: Delivery rejected`, full: error };
+  }
+  return { label: error.length > 36 ? `${error.slice(0, 33)}...` : error, full: error };
+}
 
 export function EmailLogsPage() {
   const { tenantSlug = "" } = useParams();
@@ -102,18 +126,7 @@ export function EmailLogsPage() {
     const isSent = row.delivery_status === "sent";
     const isFailed = row.delivery_status === "failed";
 
-    let errorDetail: string | null = null;
-    if (isFailed && row.last_error) {
-      if (row.last_error.includes("ENOTFOUND")) {
-        errorDetail = "Host unreachable (DNS lookup)";
-      } else if (row.last_error.includes("ECONNREFUSED")) {
-        errorDetail = "Connection refused";
-      } else if (row.last_error.includes("ETIMEDOUT")) {
-        errorDetail = "Connection timeout";
-      } else {
-        errorDetail = row.last_error.slice(0, 36);
-      }
-    }
+    const parsed = isFailed && row.last_error ? parseErrorDetail(row.last_error) : null;
 
     return {
       key: `outbound-${row.id}`,
@@ -122,7 +135,8 @@ export function EmailLogsPage() {
       subject: row.subject,
       statusTone: isSent ? "status-open" : isFailed ? "status-urgent" : "status-in_progress",
       statusLabel: isSent ? "Delivered · 250 OK" : isFailed ? "Delivery Failed" : "Queued",
-      errorDetail,
+      errorDetail: parsed?.label ?? null,
+      fullError: parsed?.full ?? null,
       providerId: row.provider_message_id,
       timestamp: row.sent_at || row.created_at,
     };
@@ -276,7 +290,11 @@ export function EmailLogsPage() {
                         {item.statusLabel}
                       </span>
                       {item.errorDetail && (
-                        <div className="muted small mono" style={{ marginTop: "3px" }}>
+                        <div
+                          className="muted small mono"
+                          style={{ marginTop: "3px", cursor: item.fullError ? "help" : "default" }}
+                          title={item.fullError || item.errorDetail}
+                        >
                           {item.errorDetail}
                         </div>
                       )}
