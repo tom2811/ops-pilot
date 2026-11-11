@@ -64,7 +64,6 @@ export function UsersPage() {
   const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
 
   useEffect(() => {
-    if (!canManage) return;
     let cancelled = false;
     Promise.all([
       api<UsersResponse>(`/t/${tenantSlug}/users`),
@@ -100,16 +99,8 @@ export function UsersPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantSlug, canManage, refresh]);
+  }, [tenantSlug, refresh]);
 
-  if (!canManage) {
-    return (
-      <div className="card narrow">
-        <h1>People managers only</h1>
-        <p className="muted">You do not have permission to manage people in this workspace.</p>
-      </div>
-    );
-  }
   if (loading) return <PageSkeleton rows={6} cols={5} label="Loading people" />;
 
   function updateDraft(userId: string, change: Partial<Draft>): void {
@@ -274,6 +265,25 @@ export function UsersPage() {
         <p className="muted">Invite teammates, assign teams, and build custom permission sets.</p>
       </PageHeader>
       <ErrorAlert message={error} />
+      {!canManage && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 16,
+            background: "rgba(56, 139, 253, 0.1)",
+            border: "1px solid rgba(88, 166, 255, 0.35)",
+            padding: "12px 18px",
+            borderRadius: 8,
+          }}
+        >
+          <strong style={{ color: "var(--accent-blue, #58a6ff)", display: "flex", alignItems: "center", gap: 8 }}>
+            Read-Only Reviewer Mode
+          </strong>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted, #8b949e)" }}>
+            Team roster and roles are displayed in read-only inspection mode. User invitations, role modifications, and team assignments are restricted to Tenant Administrators.
+          </p>
+        </div>
+      )}
       {inviteLink && (
         <div className="callout warning">
           <strong>Invitation link</strong>
@@ -290,90 +300,94 @@ export function UsersPage() {
         </div>
       )}
 
-      <div className="admin-section-divider">
-        <div className="eyebrow">Onboarding</div>
-        <h3>Invitations & Access</h3>
-      </div>
-
-      <div className="people-top">
-        <section className="card">
-          <div className="section-heading"><h2>Invite someone</h2></div>
-          <form className="form-grid" onSubmit={(event) => void invite(event)}>
-            <label>
-              Email
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Base role
-              <Select
-                ariaLabel="Base role"
-                value={inviteRole}
-                onChange={(next) => setInviteRole(next as Role)}
-                options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
-              />
-            </label>
-            {teams.length > 0 && (
-              <fieldset className="field-group span-2">
-                <legend>Teams</legend>
-                {teams.map((team) => (
-                  <label key={team.id} className="check-row">
-                    <input
-                      type="checkbox"
-                      checked={inviteTeams.includes(team.id)}
-                      onChange={(event) =>
-                        setInviteTeams((current) =>
-                          event.target.checked
-                            ? [...current, team.id]
-                            : current.filter((id) => id !== team.id),
-                        )
-                      }
-                    />
-                    {team.name}
-                  </label>
-                ))}
-              </fieldset>
-            )}
-            <div className="form-actions span-2">
-              <button className="button" disabled={busy} type="submit">Create invitation</button>
-            </div>
-          </form>
-        </section>
-
-        <section className="list-panel card">
-          <div className="panel-head">
-            <h2>Pending invitations</h2>
-            <span className="badge subtle">{invitations.length}</span>
+      {canManage && (
+        <>
+          <div className="admin-section-divider">
+            <div className="eyebrow">Onboarding</div>
+            <h3>Invitations & Access</h3>
           </div>
-          {invitations.length === 0 ? (
-            <EmptyState title="No pending invitations">New invitations will appear here.</EmptyState>
-          ) : (
-            <div className="table-wrap">
-              <table className="compact">
-                <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th /></tr></thead>
-                <tbody>
-                  {invitations.map((invitation) => (
-                    <tr key={invitation.id}>
-                      <td>{invitation.email}</td>
-                      <td><RoleBadge role={invitation.role} /></td>
-                      <td className="muted small">{new Date(invitation.expires_at).toLocaleDateString()}</td>
-                      <td>
-                        <button className="button ghost small" disabled={busy} onClick={() => void revoke(invitation.id)}>
-                          Revoke
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
+
+          <div className="people-top">
+            <section className="card">
+              <div className="section-heading"><h2>Invite someone</h2></div>
+              <form className="form-grid" onSubmit={(event) => void invite(event)}>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Base role
+                  <Select
+                    ariaLabel="Base role"
+                    value={inviteRole}
+                    onChange={(next) => setInviteRole(next as Role)}
+                    options={ROLES.map((item) => ({ value: item, label: humanize(item) }))}
+                  />
+                </label>
+                {teams.length > 0 && (
+                  <fieldset className="field-group span-2">
+                    <legend>Teams</legend>
+                    {teams.map((team) => (
+                      <label key={team.id} className="check-row">
+                        <input
+                          type="checkbox"
+                          checked={inviteTeams.includes(team.id)}
+                          onChange={(event) =>
+                            setInviteTeams((current) =>
+                              event.target.checked
+                                ? [...current, team.id]
+                                : current.filter((id) => id !== team.id),
+                            )
+                          }
+                        />
+                        {team.name}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                <div className="form-actions span-2">
+                  <button className="button" disabled={busy} type="submit">Create invitation</button>
+                </div>
+              </form>
+            </section>
+
+            <section className="list-panel card">
+              <div className="panel-head">
+                <h2>Pending invitations</h2>
+                <span className="badge subtle">{invitations.length}</span>
+              </div>
+              {invitations.length === 0 ? (
+                <EmptyState title="No pending invitations">New invitations will appear here.</EmptyState>
+              ) : (
+                <div className="table-wrap">
+                  <table className="compact">
+                    <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th /></tr></thead>
+                    <tbody>
+                      {invitations.map((invitation) => (
+                        <tr key={invitation.id}>
+                          <td>{invitation.email}</td>
+                          <td><RoleBadge role={invitation.role} /></td>
+                          <td className="muted small">{new Date(invitation.expires_at).toLocaleDateString()}</td>
+                          <td>
+                            <button className="button ghost small" disabled={busy} onClick={() => void revoke(invitation.id)}>
+                              Revoke
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
+        </>
+      )}
 
       <div className="admin-section-divider">
         <div className="eyebrow">Workspace roster</div>
@@ -407,75 +421,104 @@ export function UsersPage() {
                       <div className="muted small">{user.email}</div>
                     </td>
                     <td>
-                      <Select
-                        ariaLabel={`Role for ${user.name}`}
-                        value={roleValue}
-                        onChange={(value) => {
-                          if (value.startsWith("custom:")) {
-                            const role = roles.find((item) => item.id === value.slice(7));
-                            if (role) {
-                              updateDraft(user.id, { customRoleId: role.id, role: role.base_role });
+                      {canManage ? (
+                        <Select
+                          ariaLabel={`Role for ${user.name}`}
+                          value={roleValue}
+                          onChange={(value) => {
+                            if (value.startsWith("custom:")) {
+                              const role = roles.find((item) => item.id === value.slice(7));
+                              if (role) {
+                                updateDraft(user.id, { customRoleId: role.id, role: role.base_role });
+                              }
+                            } else {
+                              updateDraft(user.id, {
+                                customRoleId: null,
+                                role: value.slice(8) as Role,
+                              });
                             }
-                          } else {
-                            updateDraft(user.id, {
-                              customRoleId: null,
-                              role: value.slice(8) as Role,
-                            });
-                          }
-                        }}
-                        options={[
-                          ...ROLES.map((item) => ({
-                            value: `builtin:${item}`,
-                            label: humanize(item),
-                            group: "Built-in roles",
-                          })),
-                          ...roles.map((item) => ({
-                            value: `custom:${item.id}`,
-                            label: `${item.name} (${humanize(item.base_role)})`,
-                            group: "Custom roles",
-                          })),
-                        ]}
-                      />
+                          }}
+                          options={[
+                            ...ROLES.map((item) => ({
+                              value: `builtin:${item}`,
+                              label: humanize(item),
+                              group: "Built-in roles",
+                            })),
+                            ...roles.map((item) => ({
+                              value: `custom:${item.id}`,
+                              label: `${item.name} (${humanize(item.base_role)})`,
+                              group: "Custom roles",
+                            })),
+                          ]}
+                        />
+                      ) : (
+                        <RoleBadge role={user.role} />
+                      )}
                     </td>
                     <td>
-                      <div className="team-checks">
-                        {teams.map((team) => (
-                          <label key={team.id} className="check-row">
-                            <input
-                              type="checkbox"
-                              checked={draft.teamIds.includes(team.id)}
-                              onChange={() => toggleTeam(user.id, team.id)}
-                            />
-                            {team.name}
-                          </label>
-                        ))}
-                      </div>
+                      {canManage ? (
+                        <div className="team-checks">
+                          {teams.map((team) => (
+                            <label key={team.id} className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={draft.teamIds.includes(team.id)}
+                                onChange={() => toggleTeam(user.id, team.id)}
+                              />
+                              {team.name}
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="small">
+                          {user.team_ids.length > 0
+                            ? teams
+                                .filter((t) => user.team_ids.includes(t.id))
+                                .map((t) => t.name)
+                                .join(", ")
+                            : <span className="muted">No teams</span>}
+                        </span>
+                      )}
                     </td>
                     <td>
-                      <Select
-                        ariaLabel={`Manager for ${user.name}`}
-                        value={draft.managerUserId ?? ""}
-                        onChange={(value) => updateDraft(user.id, { managerUserId: value || null })}
-                        options={[
-                          { value: "", label: "No manager" },
-                          ...users
-                            .filter((other) => other.id !== user.id)
-                            .map((other) => ({ value: other.id, label: other.name })),
-                        ]}
-                      />
+                      {canManage ? (
+                        <Select
+                          ariaLabel={`Manager for ${user.name}`}
+                          value={draft.managerUserId ?? ""}
+                          onChange={(value) => updateDraft(user.id, { managerUserId: value || null })}
+                          options={[
+                            { value: "", label: "No manager" },
+                            ...users
+                              .filter((other) => other.id !== user.id)
+                              .map((other) => ({ value: other.id, label: other.name })),
+                          ]}
+                        />
+                      ) : (
+                        <span className="small muted">
+                          {users.find((other) => other.id === user.manager_user_id)?.name ?? "None"}
+                        </span>
+                      )}
                     </td>
                     <td>
-                      <input
-                        type="checkbox"
-                        checked={draft.isActive}
-                        onChange={(event) => updateDraft(user.id, { isActive: event.target.checked })}
-                        aria-label={`Active: ${user.name}`}
-                      />
+                      {canManage ? (
+                        <input
+                          type="checkbox"
+                          checked={draft.isActive}
+                          onChange={(event) => updateDraft(user.id, { isActive: event.target.checked })}
+                          aria-label={`Active: ${user.name}`}
+                        />
+                      ) : (
+                        <span className={`badge ${user.is_active ? "success" : "subtle"}`}>
+                          {user.is_active ? "Active" : "Inactive"}
+                        </span>
+                      )}
                     </td>
                     <td>
-                      <button className="button secondary small" disabled={busy} onClick={() => void saveUser(user)}>
-                        Save
-                      </button>
+                      {canManage && (
+                        <button className="button secondary small" disabled={busy} onClick={() => void saveUser(user)}>
+                          Save
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

@@ -22,7 +22,6 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
 
   app.get(
     "/t/:tenantSlug/notification-templates",
-    { preHandler: requirePermission("config.manage") },
     async (req) => {
       const { userId, tenantId } = context(req);
       return withTenant(tenantId, userId, async (client) => {

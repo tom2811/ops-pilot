@@ -51,10 +51,10 @@ export async function buildApp() {
     }
   });
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 10 } });
-  const allowedOrigins = env.WEB_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean);
+  const allowedOrigins = env.WEB_ORIGIN.split(",").map((s) => s.trim()).filter((s) => Boolean(s) && s !== "*");
   await app.register(cors, {
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+      if (!origin || allowedOrigins.includes(origin)) {
         cb(null, true);
         return;
       }

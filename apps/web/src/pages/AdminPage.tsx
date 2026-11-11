@@ -147,7 +147,6 @@ export function AdminPage() {
   }, [tenantSlug, refresh]);
 
   useEffect(() => {
-    if (!canManage) return;
     let cancelled = false;
     api<{ items: NotificationTemplate[] }>(`/t/${tenantSlug}/notification-templates`)
       .then((next) => {
@@ -159,16 +158,7 @@ export function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, [canManage, tenantSlug, refresh]);
-
-  if (!canManage) {
-    return (
-      <div className="card narrow">
-        <h1>Admins only</h1>
-        <p className="muted">You do not have permission to configure this workspace.</p>
-      </div>
-    );
-  }
+  }, [tenantSlug, refresh]);
 
   if (!config) return <PageSkeleton rows={5} cols={4} label="Loading configuration" />;
 
@@ -498,6 +488,26 @@ export function AdminPage() {
 
       <ErrorAlert message={error} />
 
+      {!canManage && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 16,
+            background: "rgba(56, 139, 253, 0.1)",
+            border: "1px solid rgba(88, 166, 255, 0.35)",
+            padding: "12px 18px",
+            borderRadius: 8,
+          }}
+        >
+          <strong style={{ color: "var(--accent-blue, #58a6ff)", display: "flex", alignItems: "center", gap: 8 }}>
+            Read-Only Reviewer Mode
+          </strong>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted, #8b949e)" }}>
+            Workspace settings, SLA policies, routing rules, and notification templates are displayed in read-only inspection mode. Modifications require the config.manage permission.
+          </p>
+        </div>
+      )}
+
       <nav className="admin-subnav" aria-label="Configuration navigation">
         <a href="#settings">Settings</a>
         <a href="#teams">Teams</a>
@@ -516,87 +526,93 @@ export function AdminPage() {
       <section className="card" id="settings">
         <h2>Workspace settings</h2>
         <form className="form-grid" onSubmit={submitSettings}>
-          <label>
-            Timezone
-            <input value={settingsTimezone} onChange={(event) => setSettingsTimezone(event.target.value)} required />
-          </label>
-          <label>
-            Ticket prefix
-            <input
-              value={settingsPrefix}
-              onChange={(event) => setSettingsPrefix(event.target.value.toUpperCase())}
-              maxLength={10}
-              required
-            />
-          </label>
-          <label>
-            Reopen window (days)
-            <input
-              type="number"
-              min={0}
-              value={settingsReopenDays}
-              onChange={(event) => setSettingsReopenDays(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Auto-close after (days)
-            <input
-              type="number"
-              min={0}
-              value={settingsAutoCloseDays}
-              onChange={(event) => setSettingsAutoCloseDays(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Business hours start
-            <input
-              type="time"
-              value={settingsBhStart}
-              onChange={(event) => setSettingsBhStart(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Business hours end
-            <input
-              type="time"
-              value={settingsBhEnd}
-              onChange={(event) => setSettingsBhEnd(event.target.value)}
-              required
-            />
-          </label>
-          <p className="form-note span-2">
-            Business hours use the workspace timezone and apply to SLA policies marked business hours only.
-          </p>
-          <fieldset className="field-group span-2">
-            <legend>Business days</legend>
-            {WEEKDAYS.map((day) => {
-              const checked = settingsBhDays.includes(day.value);
-              return (
-                <label className="check-row" key={day.value}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={checked && settingsBhDays.length === 1}
-                    onChange={(event) =>
-                      setSettingsBhDays((current) =>
-                        event.target.checked
-                          ? [...current, day.value].sort((a, b) => a - b)
-                          : current.filter((value) => value !== day.value),
-                      )
-                    }
-                  />
-                  {day.label}
-                </label>
-              );
-            })}
+          <fieldset disabled={!canManage} style={{ border: "none", padding: 0, margin: 0, display: "contents" }}>
+            <label>
+              Timezone
+              <input value={settingsTimezone} onChange={(event) => setSettingsTimezone(event.target.value)} required />
+            </label>
+            <label>
+              Ticket prefix
+              <input
+                value={settingsPrefix}
+                onChange={(event) => setSettingsPrefix(event.target.value.toUpperCase())}
+                maxLength={10}
+                required
+              />
+            </label>
+            <label>
+              Reopen window (days)
+              <input
+                type="number"
+                min={0}
+                value={settingsReopenDays}
+                onChange={(event) => setSettingsReopenDays(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Auto-close after (days)
+              <input
+                type="number"
+                min={0}
+                value={settingsAutoCloseDays}
+                onChange={(event) => setSettingsAutoCloseDays(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Business hours start
+              <input
+                type="time"
+                value={settingsBhStart}
+                onChange={(event) => setSettingsBhStart(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Business hours end
+              <input
+                type="time"
+                value={settingsBhEnd}
+                onChange={(event) => setSettingsBhEnd(event.target.value)}
+                required
+              />
+            </label>
+            <p className="form-note span-2">
+              Business hours use the workspace timezone and apply to SLA policies marked business hours only.
+            </p>
+            <fieldset className="field-group span-2">
+              <legend>Business days</legend>
+              {WEEKDAYS.map((day) => {
+                const checked = settingsBhDays.includes(day.value);
+                return (
+                  <label className="check-row" key={day.value}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!canManage || (checked && settingsBhDays.length === 1)}
+                      onChange={(event) =>
+                        setSettingsBhDays((current) =>
+                          event.target.checked
+                            ? [...current, day.value].sort((a, b) => a - b)
+                            : current.filter((value) => value !== day.value),
+                        )
+                      }
+                    />
+                    {day.label}
+                  </label>
+                );
+              })}
+            </fieldset>
           </fieldset>
           <div className="form-actions span-2">
-            <button className="button secondary" disabled={busy}>
-              Save settings
-            </button>
+            {canManage ? (
+              <button className="button secondary" disabled={busy}>
+                Save settings
+              </button>
+            ) : (
+              <span className="badge subtle">Read-only preview</span>
+            )}
           </div>
         </form>
       </section>
@@ -607,7 +623,7 @@ export function AdminPage() {
       </div>
 
       <section className="card" id="teams">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Teams</h2>
@@ -629,59 +645,62 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editTeam(team)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/teams/${team.id}`, team.name)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
-            <form className="form-grid" onSubmit={submitTeam}>
-              <label>
-                Name
-                <input
-                  value={teamName}
-                  onChange={(event) => {
-                    setTeamName(event.target.value);
-                    setTeamSlug(slugify(event.target.value));
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Slug
-                <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
-              </label>
-              <label className="span-2">
-                Team lead
-                <Select
-                  ariaLabel="Team lead"
-                  value={teamLead}
-                  onChange={setTeamLead}
-                  options={[
-                    { value: "", label: "No lead" },
-                    ...config.agents.map((agent) => ({ value: agent.id, label: agent.name })),
-                  ]}
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingTeamId ? "Update team" : "Create team"}
-                </button>
-                {editingTeamId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); setTeamLead(""); }}>
-                    Cancel
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingTeamId ? "Edit team" : "Add a team"}</h2>
+              <form className="form-grid" onSubmit={submitTeam}>
+                <label>
+                  Name
+                  <input
+                    value={teamName}
+                    onChange={(event) => {
+                      setTeamName(event.target.value);
+                      setTeamSlug(slugify(event.target.value));
+                    }}
+                    required
+                  />
+                </label>
+                <label>
+                  Slug
+                  <input value={teamSlug} onChange={(event) => setTeamSlug(event.target.value)} required />
+                </label>
+                <label className="span-2">
+                  Team lead
+                  <Select
+                    ariaLabel="Team lead"
+                    value={teamLead}
+                    onChange={setTeamLead}
+                    options={[
+                      { value: "", label: "No lead" },
+                      ...config.agents.map((agent) => ({ value: agent.id, label: agent.name })),
+                    ]}
+                  />
+                </label>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingTeamId ? "Update team" : "Create team"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingTeamId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingTeamId(""); setTeamName(""); setTeamSlug(""); setTeamLead(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="categories">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Categories</h2>
@@ -709,60 +728,63 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editCategory(category)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/categories/${category.id}`, category.name)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
-            <form className="form-grid" onSubmit={submitCategory}>
-              <label>
-                Name
-                <input
-                  value={categoryName}
-                  onChange={(event) => {
-                    setCategoryName(event.target.value);
-                    setCategorySlug(slugify(event.target.value));
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Slug
-                <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
-              </label>
-              <label>
-                Default team
-                <Select
-                  ariaLabel="Default team"
-                  value={categoryTeam}
-                  onChange={setCategoryTeam}
-                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-                />
-              </label>
-              <label>
-                Default priority
-                <Select
-                  ariaLabel="Default priority"
-                  value={categoryPriority}
-                  onChange={setCategoryPriority}
-                  options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingCategoryId ? "Update category" : "Create category"}
-                </button>
-                {editingCategoryId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); setCategoryPriority(""); }}>
-                    Cancel
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingCategoryId ? "Edit category" : "Add a category"}</h2>
+              <form className="form-grid" onSubmit={submitCategory}>
+                <label>
+                  Name
+                  <input
+                    value={categoryName}
+                    onChange={(event) => {
+                      setCategoryName(event.target.value);
+                      setCategorySlug(slugify(event.target.value));
+                    }}
+                    required
+                  />
+                </label>
+                <label>
+                  Slug
+                  <input value={categorySlug} onChange={(event) => setCategorySlug(event.target.value)} required />
+                </label>
+                <label>
+                  Default team
+                  <Select
+                    ariaLabel="Default team"
+                    value={categoryTeam}
+                    onChange={setCategoryTeam}
+                    options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+                  />
+                </label>
+                <label>
+                  Default priority
+                  <Select
+                    ariaLabel="Default priority"
+                    value={categoryPriority}
+                    onChange={setCategoryPriority}
+                    options={config.priorities.map((priority) => ({ value: priority.id, label: priority.label }))}
+                  />
+                </label>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingCategoryId ? "Update category" : "Create category"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingCategoryId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingCategoryId(""); setCategoryName(""); setCategorySlug(""); setCategoryPriority(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
@@ -772,7 +794,7 @@ export function AdminPage() {
       </div>
 
       <section className="card" id="priorities">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Priorities</h2>
@@ -791,74 +813,77 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editPriority(priority)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/priorities/${priority.id}`, priority.label)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
-            <form className="form-grid" onSubmit={submitPriority}>
-              <label className="span-2">
-                Label
-                <input
-                  value={priorityLabel}
-                  onChange={(event) => {
-                    setPriorityLabel(event.target.value);
-                    setPriorityKey(slugify(event.target.value));
-                  }}
-                  required
-                />
-              </label>
-              <div className="inline-fields span-2">
-                <label>
-                  Key
-                  <input value={priorityKey} onChange={(event) => setPriorityKey(event.target.value)} required />
-                </label>
-                <label>
-                  Rank
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingPriorityId ? "Edit priority" : "Add a priority"}</h2>
+              <form className="form-grid" onSubmit={submitPriority}>
+                <label className="span-2">
+                  Label
                   <input
-                    type="number"
-                    min={1}
-                    value={priorityRank}
-                    onChange={(event) => setPriorityRank(event.target.value)}
+                    value={priorityLabel}
+                    onChange={(event) => {
+                      setPriorityLabel(event.target.value);
+                      setPriorityKey(slugify(event.target.value));
+                    }}
                     required
                   />
                 </label>
-                <label>
-                  Color
-                  <Select
-                    ariaLabel="Color"
-                    value={priorityColor}
-                    onChange={setPriorityColor}
-                    options={[
-                      { value: "red", label: "Red" },
-                      { value: "orange", label: "Orange" },
-                      { value: "blue", label: "Blue" },
-                      { value: "green", label: "Green" },
-                      { value: "gray", label: "Gray" },
-                    ]}
-                  />
-                </label>
-              </div>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingPriorityId ? "Update priority" : "Create priority"}
-                </button>
-                {editingPriorityId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingPriorityId(""); setPriorityLabel(""); setPriorityKey(""); }}>
-                    Cancel
+                <div className="inline-fields span-2">
+                  <label>
+                    Key
+                    <input value={priorityKey} onChange={(event) => setPriorityKey(event.target.value)} required />
+                  </label>
+                  <label>
+                    Rank
+                    <input
+                      type="number"
+                      min={1}
+                      value={priorityRank}
+                      onChange={(event) => setPriorityRank(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Color
+                    <Select
+                      ariaLabel="Color"
+                      value={priorityColor}
+                      onChange={setPriorityColor}
+                      options={[
+                        { value: "red", label: "Red" },
+                        { value: "orange", label: "Orange" },
+                        { value: "blue", label: "Blue" },
+                        { value: "green", label: "Green" },
+                        { value: "gray", label: "Gray" },
+                      ]}
+                    />
+                  </label>
+                </div>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingPriorityId ? "Update priority" : "Create priority"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingPriorityId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingPriorityId(""); setPriorityLabel(""); setPriorityKey(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="sla-policies">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>SLA policies</h2>
@@ -882,92 +907,95 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editSla(policy)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/sla-policies/${policy.id}`, policy.name)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
-            <form className="form-grid" onSubmit={submitSla}>
-              <label className="span-2">
-                Name
-                <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
-              </label>
-              <div className="inline-fields span-2">
-                <label>
-                  Priority
-                  <Select
-                    ariaLabel="SLA priority"
-                    value={slaPriority}
-                    onChange={setSlaPriority}
-                    options={[
-                      { value: "", label: "All priorities" },
-                      ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
-                    ]}
-                  />
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingSlaId ? "Edit SLA policy" : "Add an SLA policy"}</h2>
+              <form className="form-grid" onSubmit={submitSla}>
+                <label className="span-2">
+                  Name
+                  <input value={slaName} onChange={(event) => setSlaName(event.target.value)} required />
                 </label>
-                <label>
-                  Category
-                  <Select
-                    ariaLabel="SLA category"
-                    value={slaCategory}
-                    onChange={setSlaCategory}
-                    options={[
-                      { value: "", label: "All categories" },
-                      ...config.categories.map((category) => ({ value: category.id, label: category.name })),
-                    ]}
-                  />
-                </label>
-              </div>
-              <div className="inline-fields span-2">
-                <label>
-                  Response minutes
+                <div className="inline-fields span-2">
+                  <label>
+                    Priority
+                    <Select
+                      ariaLabel="SLA priority"
+                      value={slaPriority}
+                      onChange={setSlaPriority}
+                      options={[
+                        { value: "", label: "All priorities" },
+                        ...config.priorities.map((priority) => ({ value: priority.id, label: priority.label })),
+                      ]}
+                    />
+                  </label>
+                  <label>
+                    Category
+                    <Select
+                      ariaLabel="SLA category"
+                      value={slaCategory}
+                      onChange={setSlaCategory}
+                      options={[
+                        { value: "", label: "All categories" },
+                        ...config.categories.map((category) => ({ value: category.id, label: category.name })),
+                      ]}
+                    />
+                  </label>
+                </div>
+                <div className="inline-fields span-2">
+                  <label>
+                    Response minutes
+                    <input
+                      type="number"
+                      min={1}
+                      value={slaResponse}
+                      onChange={(event) => setSlaResponse(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Resolution minutes
+                    <input
+                      type="number"
+                      min={1}
+                      value={slaResolution}
+                      onChange={(event) => setSlaResolution(event.target.value)}
+                      required
+                    />
+                  </label>
+                </div>
+                <label className="check-row span-2">
                   <input
-                    type="number"
-                    min={1}
-                    value={slaResponse}
-                    onChange={(event) => setSlaResponse(event.target.value)}
-                    required
+                    type="checkbox"
+                    checked={slaBusinessHours}
+                    onChange={(event) => setSlaBusinessHours(event.target.checked)}
                   />
+                  Business hours only (pause clock outside operating hours)
                 </label>
-                <label>
-                  Resolution minutes
-                  <input
-                    type="number"
-                    min={1}
-                    value={slaResolution}
-                    onChange={(event) => setSlaResolution(event.target.value)}
-                    required
-                  />
-                </label>
-              </div>
-              <label className="check-row span-2">
-                <input
-                  type="checkbox"
-                  checked={slaBusinessHours}
-                  onChange={(event) => setSlaBusinessHours(event.target.checked)}
-                />
-                Business hours only (pause clock outside operating hours)
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
-                </button>
-                {editingSlaId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
-                    Cancel
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingSlaId ? "Update SLA policy" : "Create SLA policy"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingSlaId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingSlaId(""); setSlaName(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="escalations">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Escalation policies</h2>
@@ -993,103 +1021,106 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editEscalation(policy)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/escalation-policies/${policy.id}`, policy.name)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingEscalationId ? "Edit escalation policy" : "Add an escalation policy"}</h2>
-            <form className="form-grid" onSubmit={submitEscalation}>
-              <label className="span-2">
-                Name
-                <input
-                  value={escalationName}
-                  onChange={(event) => setEscalationName(event.target.value)}
-                  required
-                />
-              </label>
-              <div className="inline-fields span-2">
-                <label>
-                  SLA clock
-                  <Select
-                    ariaLabel="Escalation SLA clock"
-                    value={escalationKind}
-                    onChange={(next) => setEscalationKind(next as "response" | "resolution")}
-                    options={[
-                      { value: "response", label: "Response" },
-                      { value: "resolution", label: "Resolution" },
-                    ]}
-                  />
-                </label>
-                <label>
-                  Threshold %
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingEscalationId ? "Edit escalation policy" : "Add an escalation policy"}</h2>
+              <form className="form-grid" onSubmit={submitEscalation}>
+                <label className="span-2">
+                  Name
                   <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={escalationThreshold}
-                    onChange={(event) => setEscalationThreshold(event.target.value)}
+                    value={escalationName}
+                    onChange={(event) => setEscalationName(event.target.value)}
                     required
                   />
                 </label>
-              </div>
-              <label className="span-2">
-                Notify
-                <Select
-                  ariaLabel="Escalation target"
-                  value={escalationTargetType}
-                  onChange={(next) =>
-                    setEscalationTargetType(next as "manager" | "team_lead" | "team")
-                  }
-                  options={[
-                    { value: "manager", label: "Ticket assignee's manager" },
-                    { value: "team_lead", label: "Ticket team's lead" },
-                    { value: "team", label: "Specific team" },
-                  ]}
-                />
-              </label>
-              {escalationTargetType === "team" && (
+                <div className="inline-fields span-2">
+                  <label>
+                    SLA clock
+                    <Select
+                      ariaLabel="Escalation SLA clock"
+                      value={escalationKind}
+                      onChange={(next) => setEscalationKind(next as "response" | "resolution")}
+                      options={[
+                        { value: "response", label: "Response" },
+                        { value: "resolution", label: "Resolution" },
+                      ]}
+                    />
+                  </label>
+                  <label>
+                    Threshold %
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={escalationThreshold}
+                      onChange={(event) => setEscalationThreshold(event.target.value)}
+                      required
+                    />
+                  </label>
+                </div>
                 <label className="span-2">
-                  Team
+                  Notify
                   <Select
-                    ariaLabel="Escalation team"
-                    value={escalationTeam}
-                    onChange={setEscalationTeam}
+                    ariaLabel="Escalation target"
+                    value={escalationTargetType}
+                    onChange={(next) =>
+                      setEscalationTargetType(next as "manager" | "team_lead" | "team")
+                    }
                     options={[
-                      { value: "", label: "Choose a team" },
-                      ...config.teams.map((team) => ({ value: team.id, label: team.name })),
+                      { value: "manager", label: "Ticket assignee's manager" },
+                      { value: "team_lead", label: "Ticket team's lead" },
+                      { value: "team", label: "Specific team" },
                     ]}
                   />
                 </label>
-              )}
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingEscalationId ? "Update escalation policy" : "Create escalation policy"}
-                </button>
-                {editingEscalationId && (
-                  <button
-                    type="button"
-                    className="button ghost"
-                    onClick={() => {
-                      setEditingEscalationId("");
-                      setEscalationName("");
-                      setEscalationThreshold("80");
-                      setEscalationTeam("");
-                    }}
-                  >
-                    Cancel
-                  </button>
+                {escalationTargetType === "team" && (
+                  <label className="span-2">
+                    Team
+                    <Select
+                      ariaLabel="Escalation team"
+                      value={escalationTeam}
+                      onChange={setEscalationTeam}
+                      options={[
+                        { value: "", label: "Choose a team" },
+                        ...config.teams.map((team) => ({ value: team.id, label: team.name })),
+                      ]}
+                    />
+                  </label>
                 )}
-              </div>
-            </form>
-          </div>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingEscalationId ? "Update escalation policy" : "Create escalation policy"}
+                  </button>
+                  {editingEscalationId && (
+                    <button
+                      type="button"
+                      className="button ghost"
+                      onClick={() => {
+                        setEditingEscalationId("");
+                        setEscalationName("");
+                        setEscalationThreshold("80");
+                        setEscalationTeam("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="holidays">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Holidays</h2>
@@ -1107,51 +1138,55 @@ export function AdminPage() {
                       <strong>{holiday.name}</strong>
                       <span className="muted small">{holiday.holiday_on}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="button ghost small"
-                      onClick={() => removeHoliday(holiday.holiday_on, holiday.name)}
-                    >
-                      Remove
-                    </button>
+                    {canManage && (
+                      <button
+                        type="button"
+                        className="button ghost small"
+                        onClick={() => removeHoliday(holiday.holiday_on, holiday.name)}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>Add a holiday</h2>
-            <form className="form-grid" onSubmit={submitHoliday}>
-              <label>
-                Date
-                <input
-                  type="date"
-                  value={holidayDate}
-                  onChange={(event) => setHolidayDate(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Name
-                <input
-                  value={holidayName}
-                  onChange={(event) => setHolidayName(event.target.value)}
-                  placeholder="Public holiday"
-                  required
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  Add holiday
-                </button>
-              </div>
-            </form>
-          </div>
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>Add a holiday</h2>
+              <form className="form-grid" onSubmit={submitHoliday}>
+                <label>
+                  Date
+                  <input
+                    type="date"
+                    value={holidayDate}
+                    onChange={(event) => setHolidayDate(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Name
+                  <input
+                    value={holidayName}
+                    onChange={(event) => setHolidayName(event.target.value)}
+                    placeholder="Public holiday"
+                    required
+                  />
+                </label>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    Add holiday
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="routing-rules">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Routing rules</h2>
@@ -1170,54 +1205,57 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editRule(rule)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/routing-rules/${rule.id}`, rule.name)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
-            <p className="muted">
-              Rules run before the category default, and the newest rule wins when two rules are equally specific. This
-              builder creates a single category condition; the API accepts combined priority and custom-field conditions
-              too.
-            </p>
-            <form className="form-grid" onSubmit={submitRule}>
-              <label className="span-2">
-                Rule name
-                <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
-              </label>
-              <label>
-                When category is
-                <Select
-                  ariaLabel="When category is"
-                  value={ruleCategory}
-                  onChange={setRuleCategory}
-                  options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
-                />
-              </label>
-              <label>
-                Route to
-                <Select
-                  ariaLabel="Route to"
-                  value={ruleTeam}
-                  onChange={setRuleTeam}
-                  options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingRuleId ? "Update rule" : "Create rule"}
-                </button>
-                {editingRuleId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
-                    Cancel
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingRuleId ? "Edit routing rule" : "Add a routing rule"}</h2>
+              <p className="muted">
+                Rules run before the category default, and the newest rule wins when two rules are equally specific. This
+                builder creates a single category condition; the API accepts combined priority and custom-field conditions
+                too.
+              </p>
+              <form className="form-grid" onSubmit={submitRule}>
+                <label className="span-2">
+                  Rule name
+                  <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} required />
+                </label>
+                <label>
+                  When category is
+                  <Select
+                    ariaLabel="When category is"
+                    value={ruleCategory}
+                    onChange={setRuleCategory}
+                    options={config.categories.map((category) => ({ value: category.id, label: category.name }))}
+                  />
+                </label>
+                <label>
+                  Route to
+                  <Select
+                    ariaLabel="Route to"
+                    value={ruleTeam}
+                    onChange={setRuleTeam}
+                    options={config.teams.map((team) => ({ value: team.id, label: team.name }))}
+                  />
+                </label>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingRuleId ? "Update rule" : "Create rule"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingRuleId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingRuleId(""); setRuleName(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1227,7 +1265,7 @@ export function AdminPage() {
       </div>
 
       <section className="card" id="custom-fields">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Custom fields</h2>
@@ -1249,95 +1287,98 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editField(field)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/custom-fields/${field.id}`, field.label)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
-            <form className="form-grid" onSubmit={submitField}>
-              <label>
-                Label
-                <input
-                  value={fieldLabel}
-                  onChange={(event) => {
-                    setFieldLabel(event.target.value);
-                    setFieldKeyValue(fieldKey(event.target.value));
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Key
-                <input value={fieldKeyValue} onChange={(event) => setFieldKeyValue(event.target.value)} required />
-              </label>
-              <div className="inline-fields span-2">
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingFieldId ? "Edit custom field" : "Add a custom field"}</h2>
+              <form className="form-grid" onSubmit={submitField}>
                 <label>
-                  Type
-                  <Select
-                    ariaLabel="Custom field type"
-                    value={fieldType}
-                    onChange={setFieldType}
-                    options={["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => ({
-                      value: type,
-                      label: humanize(type),
-                    }))}
+                  Label
+                  <input
+                    value={fieldLabel}
+                    onChange={(event) => {
+                      setFieldLabel(event.target.value);
+                      setFieldKeyValue(fieldKey(event.target.value));
+                    }}
+                    required
                   />
                 </label>
                 <label>
-                  Visibility
+                  Key
+                  <input value={fieldKeyValue} onChange={(event) => setFieldKeyValue(event.target.value)} required />
+                </label>
+                <div className="inline-fields span-2">
+                  <label>
+                    Type
+                    <Select
+                      ariaLabel="Custom field type"
+                      value={fieldType}
+                      onChange={setFieldType}
+                      options={["text", "textarea", "number", "date", "select", "multiselect", "checkbox"].map((type) => ({
+                        value: type,
+                        label: humanize(type),
+                      }))}
+                    />
+                  </label>
+                  <label>
+                    Visibility
+                    <Select
+                      ariaLabel="Custom field visibility"
+                      value={fieldVisibility}
+                      onChange={setFieldVisibility}
+                      options={[
+                        { value: "internal", label: "Internal" },
+                        { value: "public", label: "Public" },
+                      ]}
+                    />
+                  </label>
+                </div>
+                {(fieldType === "select" || fieldType === "multiselect") && (
+                  <label className="span-2">
+                    Options (comma separated)
+                    <input value={fieldOptions} onChange={(event) => setFieldOptions(event.target.value)} required />
+                  </label>
+                )}
+                <label className="span-2">
+                  Applies to category
                   <Select
-                    ariaLabel="Custom field visibility"
-                    value={fieldVisibility}
-                    onChange={setFieldVisibility}
+                    ariaLabel="Applies to category"
+                    value={fieldCategory}
+                    onChange={setFieldCategory}
                     options={[
-                      { value: "internal", label: "Internal" },
-                      { value: "public", label: "Public" },
+                      { value: "", label: "All categories" },
+                      ...config.categories.map((category) => ({ value: category.id, label: category.name })),
                     ]}
                   />
                 </label>
-              </div>
-              {(fieldType === "select" || fieldType === "multiselect") && (
-                <label className="span-2">
-                  Options (comma separated)
-                  <input value={fieldOptions} onChange={(event) => setFieldOptions(event.target.value)} required />
+                <label className="check-row span-2">
+                  <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
+                  Required
                 </label>
-              )}
-              <label className="span-2">
-                Applies to category
-                <Select
-                  ariaLabel="Applies to category"
-                  value={fieldCategory}
-                  onChange={setFieldCategory}
-                  options={[
-                    { value: "", label: "All categories" },
-                    ...config.categories.map((category) => ({ value: category.id, label: category.name })),
-                  ]}
-                />
-              </label>
-              <label className="check-row span-2">
-                <input type="checkbox" checked={fieldRequired} onChange={(event) => setFieldRequired(event.target.checked)} />
-                Required
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingFieldId ? "Update field" : "Create field"}
-                </button>
-                {editingFieldId && (
-                  <button type="button" className="button ghost" onClick={() => { setEditingFieldId(""); setFieldLabel(""); setFieldKeyValue(""); setFieldOptions(""); }}>
-                    Cancel
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingFieldId ? "Update field" : "Create field"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingFieldId && (
+                    <button type="button" className="button ghost" onClick={() => { setEditingFieldId(""); setFieldLabel(""); setFieldKeyValue(""); setFieldOptions(""); }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="card" id="canned-responses">
-        <div className="admin-split">
+        <div className="admin-split" style={!canManage ? { gridTemplateColumns: "1fr" } : undefined}>
           <div className="admin-split-col">
             <div className="admin-split-head">
               <h2>Canned responses</h2>
@@ -1356,70 +1397,73 @@ export function AdminPage() {
                     <ConfigActions
                       onEdit={() => editCanned(canned)}
                       onRemove={() => deactivate(`/t/${tenantSlug}/canned-responses/${canned.id}`, canned.title)}
+                      canManage={canManage}
                     />
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <div className="admin-split-col admin-split-form">
-            <h2>{editingCannedId ? "Edit canned response" : "Add a canned response"}</h2>
-            <p className="muted">
-              Snippets for fast agent replies. Placeholders like <code>{"{{requester.name}}"}</code>, <code>{"{{ticket.number}}"}</code>, <code>{"{{agent.name}}"}</code> are interpolated when inserted.
-            </p>
-            <form className="form-grid" onSubmit={submitCanned}>
-              <label>
-                Title
-                <input
-                  value={cannedTitle}
-                  onChange={(event) => setCannedTitle(event.target.value)}
-                  placeholder="e.g. Acknowledge and investigate"
-                  maxLength={120}
-                  required
-                />
-              </label>
-              <label>
-                Shortcut
-                <input
-                  value={cannedShortcut}
-                  onChange={(event) => setCannedShortcut(event.target.value)}
-                  placeholder="e.g. ack"
-                  maxLength={50}
-                  required
-                />
-              </label>
-              <label className="span-2">
-                Response body
-                <textarea
-                  value={cannedBody}
-                  onChange={(event) => setCannedBody(event.target.value)}
-                  rows={4}
-                  placeholder="Write the canned response message..."
-                  maxLength={20000}
-                  required
-                />
-              </label>
-              <div className="form-actions span-2">
-                <button className="button secondary" disabled={busy}>
-                  {editingCannedId ? "Update canned response" : "Create canned response"}
-                </button>
-                {editingCannedId && (
-                  <button
-                    type="button"
-                    className="button ghost"
-                    onClick={() => {
-                      setEditingCannedId("");
-                      setCannedTitle("");
-                      setCannedShortcut("");
-                      setCannedBody("");
-                    }}
-                  >
-                    Cancel
+          {canManage && (
+            <div className="admin-split-col admin-split-form">
+              <h2>{editingCannedId ? "Edit canned response" : "Add a canned response"}</h2>
+              <p className="muted">
+                Snippets for fast agent replies. Placeholders like <code>{"{{requester.name}}"}</code>, <code>{"{{ticket.number}}"}</code>, <code>{"{{agent.name}}"}</code> are interpolated when inserted.
+              </p>
+              <form className="form-grid" onSubmit={submitCanned}>
+                <label>
+                  Title
+                  <input
+                    value={cannedTitle}
+                    onChange={(event) => setCannedTitle(event.target.value)}
+                    placeholder="e.g. Acknowledge and investigate"
+                    maxLength={120}
+                    required
+                  />
+                </label>
+                <label>
+                  Shortcut
+                  <input
+                    value={cannedShortcut}
+                    onChange={(event) => setCannedShortcut(event.target.value)}
+                    placeholder="e.g. ack"
+                    maxLength={50}
+                    required
+                  />
+                </label>
+                <label className="span-2">
+                  Response body
+                  <textarea
+                    value={cannedBody}
+                    onChange={(event) => setCannedBody(event.target.value)}
+                    rows={4}
+                    placeholder="Write the canned response message..."
+                    maxLength={20000}
+                    required
+                  />
+                </label>
+                <div className="form-actions span-2">
+                  <button className="button secondary" disabled={busy}>
+                    {editingCannedId ? "Update canned response" : "Create canned response"}
                   </button>
-                )}
-              </div>
-            </form>
-          </div>
+                  {editingCannedId && (
+                    <button
+                      type="button"
+                      className="button ghost"
+                      onClick={() => {
+                        setEditingCannedId("");
+                        setCannedTitle("");
+                        setCannedShortcut("");
+                        setCannedBody("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1530,6 +1574,7 @@ export function AdminPage() {
               key={template.id}
               tenantSlug={tenantSlug}
               template={template}
+              canManage={canManage}
               onSaved={() => setRefresh((value) => value + 1)}
             />
           ))}
@@ -1539,7 +1584,16 @@ export function AdminPage() {
   );
 }
 
-function ConfigActions({ onEdit, onRemove }: { onEdit: () => void; onRemove: () => void }) {
+function ConfigActions({
+  onEdit,
+  onRemove,
+  canManage = true,
+}: {
+  onEdit: () => void;
+  onRemove: () => void;
+  canManage?: boolean;
+}) {
+  if (!canManage) return null;
   return (
     <div className="config-actions">
       <button type="button" className="button ghost small" onClick={onEdit}>
@@ -1556,10 +1610,12 @@ function TemplateEditor({
   tenantSlug,
   template,
   onSaved,
+  canManage = true,
 }: {
   tenantSlug: string;
   template: NotificationTemplate;
   onSaved: () => void;
+  canManage?: boolean;
 }) {
   const [subject, setSubject] = useState(template.subject);
   const [body, setBody] = useState(template.body);
@@ -1570,6 +1626,7 @@ function TemplateEditor({
 
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault();
+    if (!canManage) return;
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -1590,25 +1647,31 @@ function TemplateEditor({
 
   return (
     <form className="template-editor" onSubmit={(event) => void save(event)}>
-      <div className="template-editor-head">
-        <strong>{humanize(template.key)}</strong>
-        <label className="check-row">
-          <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />
-          Active
+      <fieldset disabled={!canManage} style={{ border: "none", padding: 0, margin: 0, display: "contents" }}>
+        <div className="template-editor-head">
+          <strong>{humanize(template.key)}</strong>
+          <label className="check-row">
+            <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />
+            Active
+          </label>
+        </div>
+        <label>
+          Subject
+          <input value={subject} onChange={(event) => setSubject(event.target.value)} required maxLength={300} />
         </label>
-      </div>
-      <label>
-        Subject
-        <input value={subject} onChange={(event) => setSubject(event.target.value)} required maxLength={300} />
-      </label>
-      <label>
-        Body
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} required rows={5} />
-      </label>
+        <label>
+          Body
+          <textarea value={body} onChange={(event) => setBody(event.target.value)} required rows={5} />
+        </label>
+      </fieldset>
       <div className="inline-fields">
-        <button className="button secondary" disabled={busy}>
-          {busy ? "Saving…" : "Save template"}
-        </button>
+        {canManage ? (
+          <button className="button secondary" disabled={busy}>
+            {busy ? "Saving…" : "Save template"}
+          </button>
+        ) : (
+          <span className="badge subtle">Read-only template</span>
+        )}
         {saved && <span className="muted small">Saved</span>}
         {error && <span className="error-text small">{error}</span>}
       </div>

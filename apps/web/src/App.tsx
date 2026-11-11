@@ -330,8 +330,12 @@ function TenantLayout() {
     {
       label: "Configure",
       items: [
-        ...(can("config.manage") ? [makeItem("admin", "Configuration", "admin")] : []),
-        ...(can("users.manage") ? [makeItem("users", "People", "people")] : []),
+        ...(can("config.manage") || membership.role !== "employee"
+          ? [makeItem("admin", "Configuration", "admin")]
+          : []),
+        ...(can("users.manage") || membership.role !== "employee"
+          ? [makeItem("users", "People", "people")]
+          : []),
       ],
     },
   ].filter((group) => group.items.length > 0);

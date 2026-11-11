@@ -2433,13 +2433,12 @@ tbody td:last-child {
 
 .admin-subnav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  overflow-x: auto;
+  gap: 6px;
   padding: 4px 0 12px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--hairline);
-  scrollbar-width: thin;
 }
 
 .admin-subnav a {

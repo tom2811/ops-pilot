@@ -77,9 +77,15 @@ export function createMailer(config: MailerConfig | null): Mailer | null {
     return {
       async send(input) {
         const html = input.html || formatEmailHtml(input.subject, input.text);
+        let recipient = input.to;
+        if (config.from.includes("resend.dev") && recipient.includes("+") && recipient.endsWith("@gmail.com")) {
+          // In Resend sandbox mode with onboarding@resend.dev, map plus-aliases to the primary sandbox owner inbox
+          recipient = recipient.replace(/\+[^@]+@gmail\.com$/, "@gmail.com");
+        }
+
         const payload: Record<string, unknown> = {
           from: config.from,
-          to: [input.to],
+          to: [recipient],
           subject: input.subject,
           text: input.text,
           html,

@@ -70,10 +70,10 @@ async function readUser(
 export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
   app.addHook("preHandler", requireTenant);
-  app.addHook("preHandler", requirePermission("users.manage"));
 
   app.get("/t/:tenantSlug/users", async (req) => {
     const { userId, tenantId } = context(req);
+    const canManage = req.tenant?.permissions.includes("users.manage") ?? false;
     return withTenant(tenantId, userId, async (client) => {
       const [users, invitations, customRoles] = await Promise.all([
         client.query(
@@ -90,13 +90,15 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
            order by m.is_active desc, u.display_name`,
           [tenantId],
         ),
-        client.query(
-          `select id, email, role, team_ids, expires_at, created_at
-           from user_invitations
-           where tenant_id = $1 and accepted_at is null and revoked_at is null and expires_at > now()
-           order by created_at desc`,
-          [tenantId],
-        ),
+        canManage
+          ? client.query(
+              `select id, email, role, team_ids, expires_at, created_at
+               from user_invitations
+               where tenant_id = $1 and accepted_at is null and revoked_at is null and expires_at > now()
+               order by created_at desc`,
+              [tenantId],
+            )
+          : Promise.resolve({ rows: [] }),
         client.query(
           `select cr.id, cr.name, cr.base_role, cr.permissions, cr.created_at,
                   (select count(*)::int from memberships m
@@ -111,7 +113,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/invitations", async (req) => {
+  app.post("/t/:tenantSlug/invitations", { preHandler: requirePermission("users.manage") }, async (req) => {
     const { userId, tenantId, role } = context(req);
     const input = invitationInputSchema.parse(req.body);
     const teamIds = [...new Set(input.teamIds)];
@@ -168,7 +170,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/invitations/:id", async (req, reply) => {
+  app.delete("/t/:tenantSlug/invitations/:id", { preHandler: requirePermission("users.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = context(req);
     const params = inviteParams.parse(req.params);
     return withTenant(tenantId, userId, async (client) => {
@@ -210,7 +212,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/t/:tenantSlug/custom-roles", async (req) => {
+  app.post("/t/:tenantSlug/custom-roles", { preHandler: requirePermission("users.manage") }, async (req) => {
     const { userId, tenantId, role } = context(req);
     const input = customRoleInputSchema.parse(req.body);
     const permissions = [...new Set(input.permissions)];
@@ -246,7 +248,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.patch("/t/:tenantSlug/custom-roles/:roleId", async (req) => {
+  app.patch("/t/:tenantSlug/custom-roles/:roleId", { preHandler: requirePermission("users.manage") }, async (req) => {
     const { userId, tenantId, role } = context(req);
     const params = roleParams.parse(req.params);
     const input = customRoleUpdateSchema.parse(req.body);
@@ -307,7 +309,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.delete("/t/:tenantSlug/custom-roles/:roleId", async (req, reply) => {
+  app.delete("/t/:tenantSlug/custom-roles/:roleId", { preHandler: requirePermission("users.manage") }, async (req, reply) => {
     const { userId, tenantId, role } = context(req);
     const params = roleParams.parse(req.params);
     return withTenant(tenantId, userId, async (client) => {
@@ -331,7 +333,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.patch("/t/:tenantSlug/users/:userId", async (req) => {
+  app.patch("/t/:tenantSlug/users/:userId", { preHandler: requirePermission("users.manage") }, async (req) => {
     const { userId, tenantId, role } = context(req);
     const params = userParams.parse(req.params);
     const input = membershipUpdateSchema.parse(req.body);

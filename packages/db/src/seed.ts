@@ -110,7 +110,8 @@ type UserSeed = {
   id: string;
   email: string;
   name: string;
-  memberships: Array<{ tenantSlug: string; role: Role }>;
+  password?: string;
+  memberships: Array<{ tenantSlug: string; role: Role; customRoleId?: string }>;
 };
 
 const isTestEnv =
@@ -166,6 +167,7 @@ const testUsers: UserSeed[] = isTestEnv
 const TEAM_ASSIGNMENTS: Record<string, string[]> = {
   "oaksoe.thein01@gmail.com": ["service-desk", "network", "it-ops"],
   "oaksoe.thein01+agent@gmail.com": ["service-desk", "network", "it-ops"],
+  "guest-agent@opspilot.dev": ["service-desk", "network"],
   "oaksoe.thein01+nexus@gmail.com": ["it-ops"],
   "oaksoe.thein01+nexusagent@gmail.com": ["it-ops"],
   "admin@acme.test": ["service-desk", "network", "it-ops"],
@@ -219,9 +221,22 @@ const primaryUsers: UserSeed[] = [
   },
   {
     id: "00000000-0000-4000-8000-000000003001",
-    email: "platform@opspilot.test",
-    name: "Platform Operator",
+    email: "oaksoe.thein01+platform@gmail.com",
+    name: "Oak Soe Thein (Platform Ops)",
     memberships: [],
+  },
+  {
+    id: "00000000-0000-4000-8000-000000005001",
+    email: "guest-agent@opspilot.dev",
+    name: "Guest NOC Reviewer",
+    password: "GuestReviewer2026!",
+    memberships: [
+      {
+        tenantSlug: "acme",
+        role: "agent",
+        customRoleId: "00000000-0000-4000-8000-000000006001",
+      },
+    ],
   },
 ];
 
@@ -241,7 +256,10 @@ async function main() {
 
   try {
     await client.query("begin");
-    const seedTenantIds = "select id from tenants where slug in ('acme', 'globex')";
+    await client.query("delete from notifications");
+    await client.query("delete from email_messages");
+    await client.query("delete from platform_admins");
+    const seedTenantIds = "select id from tenants where slug in ('acme', 'globex', 'vanguard', 'van')";
     await client.query(`delete from inbound_emails where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from ticket_links where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from ticket_comments where tenant_id in (${seedTenantIds})`);
@@ -249,7 +267,7 @@ async function main() {
     await client.query(`delete from ticket_assignment_history where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from tickets where tenant_id in (${seedTenantIds})`);
     await client.query(`delete from audit_log where tenant_id in (${seedTenantIds})`);
-    await client.query("delete from tenants where slug in ('acme', 'globex')");
+    await client.query("delete from tenants where slug in ('acme', 'globex', 'vanguard', 'van')");
     const seedEmails = [
       ...users.map((u) => `'${u.email}'`),
       "'admin@acme.test'",
@@ -410,17 +428,25 @@ async function main() {
       );
     }
 
+    const guestRoleId = "00000000-0000-4000-8000-000000006001";
+    await client.query(
+      `insert into custom_roles (id, tenant_id, name, base_role, permissions)
+       values ($1, $2, 'NOC Reviewer', 'agent', '["tickets.assign", "reports.view", "audit.view"]'::jsonb)
+       on conflict (tenant_id, name) do update set permissions = excluded.permissions`,
+      [guestRoleId, tenantIdBySlug.get("acme")],
+    );
+
     for (const user of users) {
       await client.query(
         "insert into users (id, email, password_hash, display_name) values ($1, $2, $3, $4)",
-        [user.id, user.email, await hashPassword(PASSWORD), user.name],
+        [user.id, user.email, await hashPassword(user.password ?? PASSWORD), user.name],
       );
       for (const membership of user.memberships) {
         const tenantId = tenantIdBySlug.get(membership.tenantSlug);
         if (!tenantId) throw new Error(`unknown tenant ${membership.tenantSlug}`);
         await client.query(
-          "insert into memberships (tenant_id, user_id, role) values ($1, $2, $3)",
-          [tenantId, user.id, membership.role],
+          "insert into memberships (tenant_id, user_id, role, custom_role_id) values ($1, $2, $3, $4)",
+          [tenantId, user.id, membership.role, membership.customRoleId ?? null],
         );
         for (const teamSlug of TEAM_ASSIGNMENTS[user.email] ?? []) {
           const teamId = teamIdsByTenant.get(membership.tenantSlug)?.get(teamSlug);
@@ -435,8 +461,9 @@ async function main() {
       }
     }
 
-    await client.query("insert into platform_admins (user_id) values ($1)", [
+    await client.query("insert into platform_admins (user_id) values ($1), ($2) on conflict do nothing", [
       "00000000-0000-4000-8000-000000003001",
+      "00000000-0000-4000-8000-000000001001",
     ]);
 
     const adminAcme = "00000000-0000-4000-8000-000000001001";
