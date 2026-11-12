@@ -206,6 +206,7 @@ export const createTicketSchema = z.object({
   description: z.string().trim().min(1).max(20000),
   categoryId: z.string().uuid(),
   customFields: z.record(z.string(), z.unknown()).default({}),
+  requesterId: z.string().uuid().optional(),
 });
 
 export const transitionSchema = z.object({

@@ -129,6 +129,15 @@ const ICONS = {
       <line x1="12" y1="15" x2="12" y2="3" />
     </>
   ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8h.01M11 12h1v4h1" />
+    </>
+  ),
+  paperclip: (
+    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  ),
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -155,6 +164,61 @@ export function Icon({
     <svg className={`icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {ICONS[name]}
     </svg>
+  );
+}
+
+export function InfoTooltip({
+  text,
+  icon = "info",
+}: {
+  text: string;
+  icon?: "info" | "alert";
+}) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ x: number; y: number; isTop: boolean } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const show = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const isTop = rect.top >= 60;
+    const x = Math.max(120, Math.min(window.innerWidth - 120, rect.left + rect.width / 2));
+    const y = isTop ? rect.top - 6 : rect.bottom + 6;
+    setCoords({ x, y, isTop });
+    setOpen(true);
+  };
+
+  const hide = () => {
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="info-tooltip-btn"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        aria-label={text}
+      >
+        <Icon name={icon === "alert" ? "alert" : "info"} />
+      </button>
+      {open &&
+        coords &&
+        createPortal(
+          <div
+            className={`info-tooltip-popover ${coords.isTop ? "placement-top" : "placement-bottom"}`}
+            style={{ left: `${coords.x}px`, top: `${coords.y}px` }}
+            role="tooltip"
+          >
+            {text}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

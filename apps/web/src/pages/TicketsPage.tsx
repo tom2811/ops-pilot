@@ -1,13 +1,19 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { formatTicketNumber, isSlaAtRisk } from "@opspilot/core";
-import { api, downloadFile, errorMessage, formatDate, post, triggerDownload } from "../api.js";
+import { api, apiUrl, csrfHeaders, downloadFile, errorMessage, formatDate, post, triggerDownload } from "../api.js";
 import { useAuth } from "../auth.js";
 import { EmptyState, ErrorAlert, PageHeader, Pager, PriorityBadge, SkeletonRows, SlaBadge, StatusBadge } from "../components.js";
 import { Icon, Sheet, Select, useToast } from "../ui.js";
 import type { Config, CustomField, Ticket, TicketList } from "../types.js";
 
 type RoutePreview = { teamName: string; explanation: string };
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function clockAtRisk(
   warnDue: string | null | undefined,
@@ -129,13 +135,41 @@ function NewTicketSheet({
   onCreated: (ticket: Ticket) => void;
 }) {
   const formId = useId();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user, memberships } = useAuth();
+  const currentMembership = memberships.find((item) => item.slug === tenantSlug);
+  const isStaff =
+    currentMembership?.role === "agent" ||
+    currentMembership?.role === "tenant_admin" ||
+    (currentMembership?.permissions ?? []).includes("tickets.assign");
+
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState(config.categories[0]?.id ?? "");
+  const [requesterId, setRequesterId] = useState("");
+  const [tenantUsers, setTenantUsers] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [customFields, setCustomFields] = useState<Record<string, unknown>>({});
   const [route, setRoute] = useState<RoutePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isStaff) return;
+    let mounted = true;
+    void api<{ users: Array<{ id: string; name: string; email: string; is_active: boolean }> }>(
+      `/t/${tenantSlug}/users`,
+    )
+      .then((res) => {
+        if (!mounted) return;
+        setTenantUsers(res.users.filter((u) => u.is_active));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [isStaff, tenantSlug]);
 
   const fields = config.custom_fields.filter(
     (field) => field.applies_to_category_id === null || field.applies_to_category_id === categoryId,
@@ -144,6 +178,25 @@ function NewTicketSheet({
   function setField(key: string, value: unknown): void {
     setCustomFields((current) => ({ ...current, [key]: value }));
     setRoute(null);
+  }
+
+  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>): void {
+    if (!event.target.files) return;
+    const selected = Array.from(event.target.files);
+    setFiles((prev) => [...prev, ...selected]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    setIsDragging(false);
+    if (!event.dataTransfer.files) return;
+    const dropped = Array.from(event.dataTransfer.files);
+    setFiles((prev) => [...prev, ...dropped]);
+  }
+
+  function removeFile(index: number): void {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function preview(): Promise<void> {
@@ -179,8 +232,26 @@ function NewTicketSheet({
         subject,
         description,
         categoryId,
+        requesterId: isStaff && requesterId ? requesterId : undefined,
         customFields: cleanFields,
       });
+
+      if (files.length > 0) {
+        for (const file of files) {
+          const body = new FormData();
+          body.append("file", file);
+          const uploadRes = await fetch(apiUrl(`/t/${tenantSlug}/tickets/${ticket.id}/attachments`), {
+            method: "POST",
+            body,
+            credentials: "include",
+            headers: csrfHeaders(),
+          });
+          if (!uploadRes.ok) {
+            console.error(`Failed to attach ${file.name}`);
+          }
+        }
+      }
+
       onCreated(ticket);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -214,6 +285,23 @@ function NewTicketSheet({
       <form id={formId} className="form-stack" onSubmit={(event) => void submit(event)}>
         <ErrorAlert message={error} />
         <div className="form-grid">
+          {isStaff && (
+            <label className="span-2">
+              Requested for
+              <Select
+                ariaLabel="Requested for"
+                value={requesterId}
+                onChange={(next) => setRequesterId(next)}
+                options={[
+                  { value: "", label: `Myself (${user?.displayName || user?.email || "Current User"})` },
+                  ...tenantUsers.map((u) => ({
+                    value: u.id,
+                    label: `${u.name || u.email} (${u.email})`,
+                  })),
+                ]}
+              />
+            </label>
+          )}
           <label className="span-2">
             Subject
             <input
@@ -256,6 +344,71 @@ function NewTicketSheet({
               onChange={(value) => setField(field.key, value)}
             />
           ))}
+
+          <div className="span-2 attachment-field">
+            <div className="field-header-row">
+              <span className="field-label">Attachments</span>
+              <span className="field-meta-hint">Optional · Up to 25 MB each</span>
+            </div>
+            <div
+              className={`attachment-compact ${isDragging ? "is-dragover" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: "none" }}
+                onChange={handleFileSelect}
+              />
+              <Icon name="paperclip" />
+              <div className="attachment-compact-text">
+                <span className="attachment-browse-link">Choose files</span> or drag here
+              </div>
+            </div>
+
+            {files.length > 0 && (
+              <ul className="attachment-file-list" aria-label="Attached files">
+                {files.map((file, idx) => (
+                  <li key={`${file.name}-${idx}`} className="attachment-file-row">
+                    <div className="attachment-file-info">
+                      <Icon name="paperclip" />
+                      <span className="attachment-file-name" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span className="attachment-file-size">({formatFileSize(file.size)})</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="attachment-file-remove"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFile(idx);
+                      }}
+                      aria-label={`Remove ${file.name}`}
+                      title="Remove file"
+                    >
+                      <Icon name="x" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
         {route && (
           <div className="route-preview">

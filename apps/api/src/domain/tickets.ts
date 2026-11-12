@@ -392,6 +392,7 @@ export async function createTicket(
     description: string;
     categoryId: string;
     customFields: Record<string, unknown>;
+    requesterId?: string;
   },
   correlationId: string,
 ): Promise<TicketRow> {
@@ -476,6 +477,17 @@ export async function createTicket(
       })
     : null;
 
+  let effectiveRequesterId = userId;
+  if (input.requesterId && (role === "tenant_admin" || role === "agent")) {
+    const targetUser = await client.query(
+      `select 1 from memberships where tenant_id = $1 and user_id = $2 and is_active`,
+      [tenantId, input.requesterId],
+    );
+    if ((targetUser.rowCount ?? 0) > 0) {
+      effectiveRequesterId = input.requesterId;
+    }
+  }
+
   const id = randomUUID();
   await client.query(
     `insert into tickets
@@ -488,7 +500,7 @@ export async function createTicket(
       number,
       input.subject,
       input.description,
-      userId,
+      effectiveRequesterId,
       route?.teamId ?? null,
       input.categoryId,
       priorityId,
@@ -531,6 +543,8 @@ export async function createTicket(
       categoryId: input.categoryId,
       priorityId,
       teamId: route?.teamId ?? null,
+      requesterId: effectiveRequesterId,
+      onBehalfOf: effectiveRequesterId !== userId,
     },
     correlationId,
   );
@@ -542,7 +556,7 @@ export async function createTicket(
     categoryId: input.categoryId,
     priorityId,
     teamId: route?.teamId ?? null,
-    requesterId: userId,
+    requesterId: effectiveRequesterId,
     customFields,
   });
 

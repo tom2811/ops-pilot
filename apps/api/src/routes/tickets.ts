@@ -164,6 +164,7 @@ export async function ticketRoutes(app: FastifyInstance): Promise<void> {
           description: input.description,
           categoryId: input.categoryId,
           customFields: input.customFields,
+          requesterId: input.requesterId,
         },
         req.correlationId,
       ),
