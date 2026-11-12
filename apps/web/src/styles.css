@@ -267,7 +267,7 @@ svg {
 }
 
 .stack > .button {
-  align-self: flex-start;
+  align-self: stretch;
 }
 
 .inline-fields > .button {
@@ -541,6 +541,9 @@ svg {
 }
 
 .sb-nav > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   transition:
     margin-top 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
     padding-top 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -933,6 +936,16 @@ svg {
   margin-bottom: 12px;
 }
 
+/* A standalone card action (for example, Claim on a ticket) should use the
+   full card width like the fields below it. */
+.card > .button {
+  width: 100%;
+}
+
+.card > .button + form {
+  margin-top: 12px;
+}
+
 .card > .table-wrap {
   margin: 14px calc(var(--card-pad) * -1) 0;
 }
@@ -1104,6 +1117,14 @@ input[type="checkbox"]:disabled {
 
 .form-grid > .form-actions {
   grid-column: span 2;
+}
+
+.form-grid > .form-actions > .button:only-child {
+  width: 100%;
+}
+
+.form-grid + p {
+  margin-top: 12px;
 }
 
 .form-note {
@@ -3122,6 +3143,12 @@ tbody td:last-child {
   font-size: 24px;
   letter-spacing: -0.02em;
   margin-bottom: 16px;
+}
+
+/* Give the secondary link a little breathing room below the primary
+   action; the flex gap alone reads tighter than the gap above it. */
+.login-panel form .button + a {
+  margin-top: 4px;
 }
 
 .demo-accounts {
