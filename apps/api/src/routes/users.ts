@@ -71,9 +71,12 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
   app.addHook("preHandler", requireTenant);
 
-  app.get("/t/:tenantSlug/users", { preHandler: requirePermission("users.manage") }, async (req) => {
-    const { userId, tenantId } = context(req);
+  app.get("/t/:tenantSlug/users", async (req, reply) => {
+    const { userId, tenantId, role } = context(req);
     const canManage = req.tenant?.permissions.includes("users.manage") ?? false;
+    if (role === "employee" && !canManage) {
+      return reply.status(403).send({ error: "Forbidden: employees cannot view people directory" });
+    }
     return withTenant(tenantId, userId, async (client) => {
       const [users, invitations, customRoles] = await Promise.all([
         client.query(

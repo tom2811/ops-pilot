@@ -354,10 +354,21 @@ describe("role permissions", () => {
     ).toBe(403);
   });
 
-  it("allows agents to read reports but not manage users", async () => {
+  it("allows agents to read reports and view user roster in read-only mode but not manage users", async () => {
     const agent = await login("agent@acme.test");
     expect((await inject(agent, { method: "GET", url: "/api/t/acme/reports" })).statusCode).toBe(200);
-    expect((await inject(agent, { method: "GET", url: "/api/t/acme/users" })).statusCode).toBe(403);
+    const usersRes = await inject(agent, { method: "GET", url: "/api/t/acme/users" });
+    expect(usersRes.statusCode).toBe(200);
+    expect(usersRes.json().invitations).toEqual([]);
+    expect(
+      (
+        await inject(agent, {
+          method: "POST",
+          url: "/api/t/acme/invitations",
+          payload: { email: "blocked@acme.test", role: "employee", teamIds: [] },
+        })
+      ).statusCode,
+    ).toBe(403);
   });
 
   it("separates platform administration from tenant administration", async () => {
