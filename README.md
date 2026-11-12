@@ -15,6 +15,7 @@ OpsPilot is designed as a production-grade service desk architecture demonstrati
 - **Defensive Security Architecture**: Double-submit session-bound CSRF protection, HMAC-SHA256 signed inbound webhook processing with replay window enforcement, non-blocking asynchronous scrypt hashing, and automated brute-force account lockout.
 - **Lossless Ticket Merging**: Multi-participant tracking, zero-loss attachment migration with database bytea blob persistence, and non-intrusive internal audit notes that preserve first-response SLA metrics.
 - **Production Observability**: Native Prometheus metrics endpoint (`/api/metrics`), worker liveness heartbeats, correlation ID propagation across all logs, and health check probes.
+- **Responsive Desktop-to-Phone Interface**: Off-canvas navigation, fluid tables, phone card layouts, and `100dvh` shells keep every workspace usable from 320 px through desktop widths without page-level horizontal scrolling.
 
 ---
 
@@ -194,7 +195,21 @@ stateDiagram-v2
 ### 6. Multi-Tiered Frontend Error Boundaries
 
 - **Context**: In React applications, unhandled JavaScript errors in any leaf component propagate to the root, unmounting the entire component tree and presenting a blank screen.
-- **Decision**: Implemented two-tiered `ErrorBoundary` isolation in [`apps/web/src/components.tsx`](file:///Users/tom/Desktop/projects/ops-pilot/apps/web/src/components.tsx) and [`apps/web/src/App.tsx`](file:///Users/tom/Desktop/projects/ops-pilot/apps/web/src/App.tsx). View-level boundaries isolate failures inside `<Outlet />`, ensuring topbar navigation, sidebar controls, and the multi-tenant workspace switcher remain fully interactive even if an individual view encounters an unexpected runtime error.
+- **Decision**: Implemented two-tiered `ErrorBoundary` isolation in [`apps/web/src/components.tsx`](apps/web/src/components.tsx) and [`apps/web/src/App.tsx`](apps/web/src/App.tsx). View-level boundaries isolate failures inside `<Outlet />`, ensuring topbar navigation, sidebar controls, and the multi-tenant workspace switcher remain fully interactive even if an individual view encounters an unexpected runtime error.
+
+### 7. Responsive Desktop-to-Phone Interface
+
+- **Context**: Service desks are increasingly operated from phones and tablets on the move, but dense ITSM tables and multi-column forms degrade badly when simply squeezed into a narrow viewport.
+- **Decision**:
+  - The shell is fluid, with deliberate breakpoints at **1180, 1080, 960, 760, 540, and 380 px**.
+  - **Navigation**: below 760 px the sidebar becomes an off-canvas drawer with a scrim, focus handling, and Escape-to-close.
+  - **Ticket queue**: the subject column keeps a readable minimum width on tablets; requester, owner, and updated columns drop below 1180 px; status and priority badges move under the subject below 540 px so triage context is never lost.
+  - **Email logs**: fixed desktop column widths give way to a labelled card layout below 540 px, avoiding sideways scrolling for long addresses.
+  - **Forms**: grids collapse to one column and primary actions stretch to the field width with consistent vertical spacing.
+  - **Height**: full-page shells use `100dvh` with a `100vh` fallback so mobile browser chrome does not crop layouts.
+  - Tables scroll only inside their `.table-wrap` container; the document itself never scrolls horizontally.
+
+  Verified with Playwright at **320, 390, 768, 834, 1024, and 1280 px** in both light and dark themes.
 
 ---
 
@@ -230,6 +245,23 @@ ops-pilot/
 ├── compose.yaml         # Local multi-service development orchestration
 └── package.json         # Workspace root configuration
 ```
+
+---
+
+## Ticket Intake & Triage Model
+
+Requester-facing intake stays deliberately focused to minimize friction while capturing essential diagnostic context:
+
+| Input | Required | Visibility | Purpose |
+|---|---|---|---|
+| **Subject** | Yes | All users | One-line summary used in queues and notifications |
+| **Description** | Yes | All users | Symptom, impact, and what the requester already tried |
+| **Category** | Yes | All users | Selects the routing rule and default priority |
+| **Conditional custom fields** | Per workspace | All users | Location, site, department, asset tag - shown only when relevant to the category |
+| **Attachments** | Optional | All users | Diagnostic logs, traces, or screenshots staged and uploaded at intake |
+| **Requested for** | Optional | Agents & Admins | Allows staff to open tickets on behalf of employees with full audit logging |
+
+Everything else is derived or added during triage: the ticket number, status, priority, team, assignee, and SLA targets are system- or agent-managed. Priority overrides, team reassignments, and internal notes happen on the ticket detail view. This keeps submission fast and avoids asking requesters to make decisions they are not qualified to make, such as severity, queue routing, or internal assignment groups.
 
 ---
 
@@ -297,7 +329,9 @@ cp .env.example .env
 createdb opspilot
 pnpm db:role
 pnpm db:migrate
-pnpm db:seed
+
+# Workspace fixtures and demo accounts (test accounts need this flag)
+INCLUDE_TEST_ACCOUNTS=true pnpm db:seed
 
 # 4. Run API and Web servers concurrently
 pnpm dev:api
@@ -324,17 +358,24 @@ docker compose up --build
 - **n8n Automation Engine**: `http://localhost:5678`
 - **PostgreSQL Database**: `localhost:5433`
 
-The one-shot `bootstrap` container automatically verifies role privileges, runs migrations `001` through `029`, and seeds demo data.
+The one-shot `bootstrap` container verifies role privileges and applies migrations `001` through `029`. Demo workspaces and test accounts are optional and live in the `demo` profile:
+
+```bash
+docker compose --profile demo run --rm -e INCLUDE_TEST_ACCOUNTS=true seed
+```
 
 ### Seed Accounts (Password: `Passw0rd!`)
 
+These accounts are created only when seeding with `INCLUDE_TEST_ACCOUNTS=true`.
+
 | Workspace | Email | Role | Scope |
 |---|---|---|---|
-| **Acme Corp** | `admin@acme.test` | `tenant_admin` | Full workspace administration |
-| **Acme Corp** | `agent@acme.test` | `agent` | Ticket queues, claims, responses |
-| **Acme Corp** | `employee@acme.test` | `employee` | Self-service portal requester |
-| **Globex** | `admin@globex.test` | `tenant_admin` | Isolated secondary tenant |
-| **Platform** | `platform@opspilot.test` | `platform_admin` | Multi-tenant provisioning |
+| **Apex Cloud Systems** | `admin@acme.test` | `tenant_admin` | Full workspace administration |
+| **Apex Cloud Systems** | `agent@acme.test` | `agent` | Ticket queues, claims, responses |
+| **Apex Cloud Systems** | `employee@acme.test` | `employee` | Self-service portal requester |
+| **Nexus Global Logistics** | `admin@globex.test` | `tenant_admin` | Isolated secondary tenant |
+| **Platform** | `platform@opspilot.test` | `platform_admin` | Multi-tenant provisioning (Test) |
+| **Platform** | `oaksoe.thein01+platform@gmail.com` | `platform_admin` | Multi-tenant provisioning (Primary) |
 
 ---
 
@@ -353,8 +394,3 @@ pnpm --filter @opspilot/api test
 pnpm -r typecheck
 ```
 
----
-
-## License & Attribution
-
-Developed by Oak Soe Thein as a showcase of modern multi-tenant software architecture and resilient automation patterns. Distributed under the MIT License.

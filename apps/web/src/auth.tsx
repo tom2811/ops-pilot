@@ -14,6 +14,16 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const SESSION_HINT_KEY = "opspilot.session_active";
+
+export function hasSessionHint(): boolean {
+  try {
+    return localStorage.getItem(SESSION_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
@@ -24,12 +34,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api<MeResponse>("/auth/me")
       .then((me) => {
         if (cancelled) return;
+        try {
+          localStorage.setItem(SESSION_HINT_KEY, "1");
+        } catch {
+          /* ignore */
+        }
         setCsrfToken(me.csrfToken);
         setUser(me.user);
         setMemberships(me.memberships);
       })
       .catch(() => {
         if (!cancelled) {
+          try {
+            localStorage.removeItem(SESSION_HINT_KEY);
+          } catch {
+            /* ignore */
+          }
           setUser(null);
           setMemberships([]);
         }
@@ -44,12 +64,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const me = await post<MeResponse>("/auth/login", { email, password });
+    try {
+      localStorage.setItem(SESSION_HINT_KEY, "1");
+    } catch {
+      /* ignore */
+    }
     setCsrfToken(me.csrfToken);
     setUser(me.user);
     setMemberships(me.memberships);
   }, []);
 
   const logout = useCallback(async () => {
+    try {
+      localStorage.removeItem(SESSION_HINT_KEY);
+    } catch {
+      /* ignore */
+    }
     await post("/auth/logout", {});
     setCsrfToken(null);
     setUser(null);

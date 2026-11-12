@@ -161,6 +161,12 @@ const testUsers: UserSeed[] = isTestEnv
         name: "Globex Employee Test",
         memberships: [{ tenantSlug: "globex", role: "employee" }],
       },
+      {
+        id: "00000000-0000-4000-8000-000000004007",
+        email: "platform@opspilot.test",
+        name: "Platform Test Operator",
+        memberships: [],
+      },
     ]
   : [];
 
@@ -478,6 +484,11 @@ async function main() {
       "00000000-0000-4000-8000-000000003001",
       "00000000-0000-4000-8000-000000001001",
     ]);
+    if (isTestEnv) {
+      await client.query("insert into platform_admins (user_id) values ($1) on conflict do nothing", [
+        "00000000-0000-4000-8000-000000004007",
+      ]);
+    }
 
     const adminAcme = "00000000-0000-4000-8000-000000001001";
     const agentAcme = "00000000-0000-4000-8000-000000001002";

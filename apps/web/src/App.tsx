@@ -11,7 +11,7 @@ import {
   useParams,
 } from "react-router-dom";
 import { humanize } from "./api.js";
-import { useAuth } from "./auth.js";
+import { hasSessionHint, useAuth } from "./auth.js";
 import type { User } from "./types.js";
 import { ErrorBoundary, PageSkeleton } from "./components.js";
 import { Icon, BrandMark, Menu, ThemeToggle, useTheme, type IconName } from "./ui.js";
@@ -29,14 +29,6 @@ import { ReportsPage } from "./pages/ReportsPage.js";
 import { TicketDetailPage } from "./pages/TicketDetailPage.js";
 import { TicketsPage } from "./pages/TicketsPage.js";
 import { UsersPage } from "./pages/UsersPage.js";
-
-function Loading({ label = "Loading…" }: { label?: string }) {
-  return (
-    <div className="boot-page">
-      <PageSkeleton rows={4} cols={4} label={label} />
-    </div>
-  );
-}
 
 function TenantLayoutSkeleton({
   collapsed,
@@ -126,7 +118,7 @@ function TenantLayoutSkeleton({
 
 function HomeRedirect() {
   const { user, memberships, loading } = useAuth();
-  if (loading) return <Loading />;
+  if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (memberships.length === 0 && user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   if (memberships.length === 0) return <NoMembership />;
@@ -290,6 +282,7 @@ function TenantLayout() {
   }, [drawerOpen]);
 
   if (loading) {
+    if (!hasSessionHint()) return null;
     return <TenantLayoutSkeleton collapsed={collapsed} setCollapsed={setCollapsed} />;
   }
   if (!user) return <Navigate to="/login" replace />;

@@ -71,7 +71,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
   app.addHook("preHandler", requireTenant);
 
-  app.get("/t/:tenantSlug/users", async (req) => {
+  app.get("/t/:tenantSlug/users", { preHandler: requirePermission("users.manage") }, async (req) => {
     const { userId, tenantId } = context(req);
     const canManage = req.tenant?.permissions.includes("users.manage") ?? false;
     return withTenant(tenantId, userId, async (client) => {
